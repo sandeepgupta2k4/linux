@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  *
@@ -287,11 +288,11 @@ ksocknal_match_tx(struct ksock_conn *conn, struct ksock_tx *tx, int nonblk)
 
 	if (!tx || !tx->tx_lnetmsg) {
 		/* noop packet */
-		nob = offsetof(ksock_msg_t, ksm_u);
+		nob = offsetof(struct ksock_msg, ksm_u);
 	} else {
 		nob = tx->tx_lnetmsg->msg_len +
 		      ((conn->ksnc_proto == &ksocknal_protocol_v1x) ?
-		       sizeof(struct lnet_hdr) : sizeof(ksock_msg_t));
+		       sizeof(struct lnet_hdr) : sizeof(struct ksock_msg));
 	}
 
 	/* default checking for typed connection */
@@ -325,9 +326,9 @@ ksocknal_match_tx_v3(struct ksock_conn *conn, struct ksock_tx *tx, int nonblk)
 	int nob;
 
 	if (!tx || !tx->tx_lnetmsg)
-		nob = offsetof(ksock_msg_t, ksm_u);
+		nob = offsetof(struct ksock_msg, ksm_u);
 	else
-		nob = tx->tx_lnetmsg->msg_len + sizeof(ksock_msg_t);
+		nob = tx->tx_lnetmsg->msg_len + sizeof(struct ksock_msg);
 
 	switch (conn->ksnc_type) {
 	default:
@@ -456,7 +457,7 @@ ksocknal_handle_zcack(struct ksock_conn *conn, __u64 cookie1, __u64 cookie2)
 }
 
 static int
-ksocknal_send_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello)
+ksocknal_send_hello_v1(struct ksock_conn *conn, struct ksock_hello_msg *hello)
 {
 	struct socket *sock = conn->ksnc_sock;
 	struct lnet_hdr *hdr;
@@ -466,7 +467,7 @@ ksocknal_send_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello)
 
 	BUILD_BUG_ON(sizeof(struct lnet_magicversion) != offsetof(struct lnet_hdr, src_nid));
 
-	LIBCFS_ALLOC(hdr, sizeof(*hdr));
+	hdr = kzalloc(sizeof(*hdr), GFP_NOFS);
 	if (!hdr) {
 		CERROR("Can't allocate struct lnet_hdr\n");
 		return -ENOMEM;
@@ -525,13 +526,13 @@ ksocknal_send_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello)
 			&conn->ksnc_ipaddr, conn->ksnc_port);
 	}
 out:
-	LIBCFS_FREE(hdr, sizeof(*hdr));
+	kfree(hdr);
 
 	return rc;
 }
 
 static int
-ksocknal_send_hello_v2(struct ksock_conn *conn, ksock_hello_msg_t *hello)
+ksocknal_send_hello_v2(struct ksock_conn *conn, struct ksock_hello_msg *hello)
 {
 	struct socket *sock = conn->ksnc_sock;
 	int rc;
@@ -549,7 +550,7 @@ ksocknal_send_hello_v2(struct ksock_conn *conn, ksock_hello_msg_t *hello)
 		LNET_UNLOCK();
 	}
 
-	rc = lnet_sock_write(sock, hello, offsetof(ksock_hello_msg_t, kshm_ips),
+	rc = lnet_sock_write(sock, hello, offsetof(struct ksock_hello_msg, kshm_ips),
 			     lnet_acceptor_timeout());
 	if (rc) {
 		CNETERR("Error %d sending HELLO hdr to %pI4h/%d\n",
@@ -573,7 +574,7 @@ ksocknal_send_hello_v2(struct ksock_conn *conn, ksock_hello_msg_t *hello)
 }
 
 static int
-ksocknal_recv_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello,
+ksocknal_recv_hello_v1(struct ksock_conn *conn, struct ksock_hello_msg *hello,
 		       int timeout)
 {
 	struct socket *sock = conn->ksnc_sock;
@@ -581,7 +582,7 @@ ksocknal_recv_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello,
 	int rc;
 	int i;
 
-	LIBCFS_ALLOC(hdr, sizeof(*hdr));
+	hdr = kzalloc(sizeof(*hdr), GFP_NOFS);
 	if (!hdr) {
 		CERROR("Can't allocate struct lnet_hdr\n");
 		return -ENOMEM;
@@ -643,13 +644,13 @@ ksocknal_recv_hello_v1(struct ksock_conn *conn, ksock_hello_msg_t *hello,
 		}
 	}
 out:
-	LIBCFS_FREE(hdr, sizeof(*hdr));
+	kfree(hdr);
 
 	return rc;
 }
 
 static int
-ksocknal_recv_hello_v2(struct ksock_conn *conn, ksock_hello_msg_t *hello,
+ksocknal_recv_hello_v2(struct ksock_conn *conn, struct ksock_hello_msg *hello,
 		       int timeout)
 {
 	struct socket *sock = conn->ksnc_sock;
@@ -662,8 +663,8 @@ ksocknal_recv_hello_v2(struct ksock_conn *conn, ksock_hello_msg_t *hello,
 		conn->ksnc_flip = 1;
 
 	rc = lnet_sock_read(sock, &hello->kshm_src_nid,
-			    offsetof(ksock_hello_msg_t, kshm_ips) -
-				     offsetof(ksock_hello_msg_t, kshm_src_nid),
+			    offsetof(struct ksock_hello_msg, kshm_ips) -
+				     offsetof(struct ksock_hello_msg, kshm_src_nid),
 			    timeout);
 	if (rc) {
 		CERROR("Error %d reading HELLO from %pI4h\n",
@@ -738,15 +739,15 @@ ksocknal_pack_msg_v2(struct ksock_tx *tx)
 		LASSERT(tx->tx_msg.ksm_type != KSOCK_MSG_NOOP);
 
 		tx->tx_msg.ksm_u.lnetmsg.ksnm_hdr = tx->tx_lnetmsg->msg_hdr;
-		tx->tx_iov[0].iov_len = sizeof(ksock_msg_t);
-		tx->tx_nob = sizeof(ksock_msg_t) + tx->tx_lnetmsg->msg_len;
-		tx->tx_resid = sizeof(ksock_msg_t) + tx->tx_lnetmsg->msg_len;
+		tx->tx_iov[0].iov_len = sizeof(struct ksock_msg);
+		tx->tx_nob = sizeof(struct ksock_msg) + tx->tx_lnetmsg->msg_len;
+		tx->tx_resid = sizeof(struct ksock_msg) + tx->tx_lnetmsg->msg_len;
 	} else {
 		LASSERT(tx->tx_msg.ksm_type == KSOCK_MSG_NOOP);
 
-		tx->tx_iov[0].iov_len = offsetof(ksock_msg_t, ksm_u.lnetmsg.ksnm_hdr);
-		tx->tx_nob = offsetof(ksock_msg_t,  ksm_u.lnetmsg.ksnm_hdr);
-		tx->tx_resid = offsetof(ksock_msg_t,  ksm_u.lnetmsg.ksnm_hdr);
+		tx->tx_iov[0].iov_len = offsetof(struct ksock_msg, ksm_u.lnetmsg.ksnm_hdr);
+		tx->tx_nob = offsetof(struct ksock_msg,  ksm_u.lnetmsg.ksnm_hdr);
+		tx->tx_resid = offsetof(struct ksock_msg,  ksm_u.lnetmsg.ksnm_hdr);
 	}
 	/*
 	 * Don't checksum before start sending, because packet can be
@@ -755,7 +756,7 @@ ksocknal_pack_msg_v2(struct ksock_tx *tx)
 }
 
 static void
-ksocknal_unpack_msg_v1(ksock_msg_t *msg)
+ksocknal_unpack_msg_v1(struct ksock_msg *msg)
 {
 	msg->ksm_csum = 0;
 	msg->ksm_type = KSOCK_MSG_LNET;
@@ -764,7 +765,7 @@ ksocknal_unpack_msg_v1(ksock_msg_t *msg)
 }
 
 static void
-ksocknal_unpack_msg_v2(ksock_msg_t *msg)
+ksocknal_unpack_msg_v2(struct ksock_msg *msg)
 {
 	return;  /* Do nothing */
 }

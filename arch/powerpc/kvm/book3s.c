@@ -20,6 +20,10 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/miscdevice.h>
+#include <linux/gfp.h>
+#include <linux/sched.h>
+#include <linux/vmalloc.h>
+#include <linux/highmem.h>
 
 #include <asm/reg.h>
 #include <asm/cputable.h>
@@ -31,10 +35,7 @@
 #include <asm/kvm_book3s.h>
 #include <asm/mmu_context.h>
 #include <asm/page.h>
-#include <linux/gfp.h>
-#include <linux/sched.h>
-#include <linux/vmalloc.h>
-#include <linux/highmem.h>
+#include <asm/xive.h>
 
 #include "book3s.h"
 #include "trace.h"
@@ -196,6 +197,24 @@ void kvmppc_core_queue_program(struct kvm_vcpu *vcpu, ulong flags)
 	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_PROGRAM, flags);
 }
 EXPORT_SYMBOL_GPL(kvmppc_core_queue_program);
+
+void kvmppc_core_queue_fpunavail(struct kvm_vcpu *vcpu)
+{
+	/* might as well deliver this straight away */
+	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_FP_UNAVAIL, 0);
+}
+
+void kvmppc_core_queue_vec_unavail(struct kvm_vcpu *vcpu)
+{
+	/* might as well deliver this straight away */
+	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_ALTIVEC, 0);
+}
+
+void kvmppc_core_queue_vsx_unavail(struct kvm_vcpu *vcpu)
+{
+	/* might as well deliver this straight away */
+	kvmppc_inject_interrupt(vcpu, BOOK3S_INTERRUPT_VSX, 0);
+}
 
 void kvmppc_core_queue_dec(struct kvm_vcpu *vcpu)
 {
@@ -465,18 +484,32 @@ void kvmppc_subarch_vcpu_uninit(struct kvm_vcpu *vcpu)
 int kvm_arch_vcpu_ioctl_get_sregs(struct kvm_vcpu *vcpu,
 				  struct kvm_sregs *sregs)
 {
-	return vcpu->kvm->arch.kvm_ops->get_sregs(vcpu, sregs);
+	int ret;
+
+	vcpu_load(vcpu);
+	ret = vcpu->kvm->arch.kvm_ops->get_sregs(vcpu, sregs);
+	vcpu_put(vcpu);
+
+	return ret;
 }
 
 int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
 				  struct kvm_sregs *sregs)
 {
-	return vcpu->kvm->arch.kvm_ops->set_sregs(vcpu, sregs);
+	int ret;
+
+	vcpu_load(vcpu);
+	ret = vcpu->kvm->arch.kvm_ops->set_sregs(vcpu, sregs);
+	vcpu_put(vcpu);
+
+	return ret;
 }
 
 int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
 	int i;
+
+	vcpu_load(vcpu);
 
 	regs->pc = kvmppc_get_pc(vcpu);
 	regs->cr = kvmppc_get_cr(vcpu);
@@ -499,12 +532,15 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
 		regs->gpr[i] = kvmppc_get_gpr(vcpu, i);
 
+	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
 	int i;
+
+	vcpu_load(vcpu);
 
 	kvmppc_set_pc(vcpu, regs->pc);
 	kvmppc_set_cr(vcpu, regs->cr);
@@ -526,6 +562,7 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
 		kvmppc_set_gpr(vcpu, i, regs->gpr[i]);
 
+	vcpu_put(vcpu);
 	return 0;
 }
 
@@ -578,11 +615,14 @@ int kvmppc_get_one_reg(struct kvm_vcpu *vcpu, u64 id,
 			break;
 #ifdef CONFIG_KVM_XICS
 		case KVM_REG_PPC_ICP_STATE:
-			if (!vcpu->arch.icp) {
+			if (!vcpu->arch.icp && !vcpu->arch.xive_vcpu) {
 				r = -ENXIO;
 				break;
 			}
-			*val = get_reg_val(id, kvmppc_xics_get_icp(vcpu));
+			if (xive_enabled())
+				*val = get_reg_val(id, kvmppc_xive_get_icp(vcpu));
+			else
+				*val = get_reg_val(id, kvmppc_xics_get_icp(vcpu));
 			break;
 #endif /* CONFIG_KVM_XICS */
 		case KVM_REG_PPC_FSCR:
@@ -648,12 +688,14 @@ int kvmppc_set_one_reg(struct kvm_vcpu *vcpu, u64 id,
 #endif /* CONFIG_VSX */
 #ifdef CONFIG_KVM_XICS
 		case KVM_REG_PPC_ICP_STATE:
-			if (!vcpu->arch.icp) {
+			if (!vcpu->arch.icp && !vcpu->arch.xive_vcpu) {
 				r = -ENXIO;
 				break;
 			}
-			r = kvmppc_xics_set_icp(vcpu,
-						set_reg_val(id, *val));
+			if (xive_enabled())
+				r = kvmppc_xive_set_icp(vcpu, set_reg_val(id, *val));
+			else
+				r = kvmppc_xics_set_icp(vcpu, set_reg_val(id, *val));
 			break;
 #endif /* CONFIG_KVM_XICS */
 		case KVM_REG_PPC_FSCR:
@@ -713,7 +755,9 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 					struct kvm_guest_debug *dbg)
 {
+	vcpu_load(vcpu);
 	vcpu->guest_debug = dbg->control;
+	vcpu_put(vcpu);
 	return 0;
 }
 
@@ -924,6 +968,50 @@ int kvmppc_book3s_hcall_implemented(struct kvm *kvm, unsigned long hcall)
 	return kvm->arch.kvm_ops->hcall_implemented(hcall);
 }
 
+#ifdef CONFIG_KVM_XICS
+int kvm_set_irq(struct kvm *kvm, int irq_source_id, u32 irq, int level,
+		bool line_status)
+{
+	if (xive_enabled())
+		return kvmppc_xive_set_irq(kvm, irq_source_id, irq, level,
+					   line_status);
+	else
+		return kvmppc_xics_set_irq(kvm, irq_source_id, irq, level,
+					   line_status);
+}
+
+int kvm_arch_set_irq_inatomic(struct kvm_kernel_irq_routing_entry *irq_entry,
+			      struct kvm *kvm, int irq_source_id,
+			      int level, bool line_status)
+{
+	return kvm_set_irq(kvm, irq_source_id, irq_entry->gsi,
+			   level, line_status);
+}
+static int kvmppc_book3s_set_irq(struct kvm_kernel_irq_routing_entry *e,
+				 struct kvm *kvm, int irq_source_id, int level,
+				 bool line_status)
+{
+	return kvm_set_irq(kvm, irq_source_id, e->gsi, level, line_status);
+}
+
+int kvm_irq_map_gsi(struct kvm *kvm,
+		    struct kvm_kernel_irq_routing_entry *entries, int gsi)
+{
+	entries->gsi = gsi;
+	entries->type = KVM_IRQ_ROUTING_IRQCHIP;
+	entries->set = kvmppc_book3s_set_irq;
+	entries->irqchip.irqchip = 0;
+	entries->irqchip.pin = gsi;
+	return 1;
+}
+
+int kvm_irq_map_chip_pin(struct kvm *kvm, unsigned irqchip, unsigned pin)
+{
+	return pin;
+}
+
+#endif /* CONFIG_KVM_XICS */
+
 static int kvmppc_book3s_init(void)
 {
 	int r;
@@ -934,12 +1022,25 @@ static int kvmppc_book3s_init(void)
 #ifdef CONFIG_KVM_BOOK3S_32_HANDLER
 	r = kvmppc_book3s_init_pr();
 #endif
-	return r;
 
+#ifdef CONFIG_KVM_XICS
+#ifdef CONFIG_KVM_XIVE
+	if (xive_enabled()) {
+		kvmppc_xive_init_module();
+		kvm_register_device_ops(&kvm_xive_ops, KVM_DEV_TYPE_XICS);
+	} else
+#endif
+		kvm_register_device_ops(&kvm_xics_ops, KVM_DEV_TYPE_XICS);
+#endif
+	return r;
 }
 
 static void kvmppc_book3s_exit(void)
 {
+#ifdef CONFIG_KVM_XICS
+	if (xive_enabled())
+		kvmppc_xive_exit_module();
+#endif
 #ifdef CONFIG_KVM_BOOK3S_32_HANDLER
 	kvmppc_book3s_exit_pr();
 #endif

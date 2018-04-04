@@ -82,21 +82,20 @@ xt_ct_set_helper(struct nf_conn *ct, const char *helper_name,
 
 	proto = xt_ct_find_proto(par);
 	if (!proto) {
-		pr_info("You must specify a L4 protocol, and not use "
-			"inversions on it.\n");
+		pr_info_ratelimited("You must specify a L4 protocol and not use inversions on it\n");
 		return -ENOENT;
 	}
 
 	helper = nf_conntrack_helper_try_module_get(helper_name, par->family,
 						    proto);
 	if (helper == NULL) {
-		pr_info("No such helper \"%s\"\n", helper_name);
+		pr_info_ratelimited("No such helper \"%s\"\n", helper_name);
 		return -ENOENT;
 	}
 
 	help = nf_ct_helper_ext_add(ct, helper, GFP_KERNEL);
 	if (help == NULL) {
-		module_put(helper->me);
+		nf_conntrack_helper_put(helper);
 		return -ENOMEM;
 	}
 
@@ -121,9 +120,10 @@ xt_ct_set_timeout(struct nf_conn *ct, const struct xt_tgchk_param *par,
 {
 #ifdef CONFIG_NF_CONNTRACK_TIMEOUT
 	typeof(nf_ct_timeout_find_get_hook) timeout_find_get;
+	const struct nf_conntrack_l4proto *l4proto;
 	struct ctnl_timeout *timeout;
 	struct nf_conn_timeout *timeout_ext;
-	struct nf_conntrack_l4proto *l4proto;
+	const char *errmsg = NULL;
 	int ret = 0;
 	u8 proto;
 
@@ -131,29 +131,29 @@ xt_ct_set_timeout(struct nf_conn *ct, const struct xt_tgchk_param *par,
 	timeout_find_get = rcu_dereference(nf_ct_timeout_find_get_hook);
 	if (timeout_find_get == NULL) {
 		ret = -ENOENT;
-		pr_info("Timeout policy base is empty\n");
+		errmsg = "Timeout policy base is empty";
 		goto out;
 	}
 
 	proto = xt_ct_find_proto(par);
 	if (!proto) {
 		ret = -EINVAL;
-		pr_info("You must specify a L4 protocol, and not use "
-			"inversions on it.\n");
+		errmsg = "You must specify a L4 protocol and not use inversions on it";
 		goto out;
 	}
 
 	timeout = timeout_find_get(par->net, timeout_name);
 	if (timeout == NULL) {
 		ret = -ENOENT;
-		pr_info("No such timeout policy \"%s\"\n", timeout_name);
+		pr_info_ratelimited("No such timeout policy \"%s\"\n",
+				    timeout_name);
 		goto out;
 	}
 
 	if (timeout->l3num != par->family) {
 		ret = -EINVAL;
-		pr_info("Timeout policy `%s' can only be used by L3 protocol "
-			"number %d\n", timeout_name, timeout->l3num);
+		pr_info_ratelimited("Timeout policy `%s' can only be used by L%d protocol number %d\n",
+				    timeout_name, 3, timeout->l3num);
 		goto err_put_timeout;
 	}
 	/* Make sure the timeout policy matches any existing protocol tracker,
@@ -162,14 +162,15 @@ xt_ct_set_timeout(struct nf_conn *ct, const struct xt_tgchk_param *par,
 	l4proto = __nf_ct_l4proto_find(par->family, proto);
 	if (timeout->l4proto->l4proto != l4proto->l4proto) {
 		ret = -EINVAL;
-		pr_info("Timeout policy `%s' can only be used by L4 protocol "
-			"number %d\n",
-			timeout_name, timeout->l4proto->l4proto);
+		pr_info_ratelimited("Timeout policy `%s' can only be used by L%d protocol number %d\n",
+				    timeout_name, 4, timeout->l4proto->l4proto);
 		goto err_put_timeout;
 	}
 	timeout_ext = nf_ct_timeout_ext_add(ct, timeout, GFP_ATOMIC);
-	if (timeout_ext == NULL)
+	if (!timeout_ext) {
 		ret = -ENOMEM;
+		goto err_put_timeout;
+	}
 
 	rcu_read_unlock();
 	return ret;
@@ -178,6 +179,8 @@ err_put_timeout:
 	__xt_ct_tg_timeout_put(timeout);
 out:
 	rcu_read_unlock();
+	if (errmsg)
+		pr_info_ratelimited("%s\n", errmsg);
 	return ret;
 #else
 	return -EOPNOTSUPP;
@@ -201,6 +204,7 @@ static int xt_ct_tg_check(const struct xt_tgchk_param *par,
 			  struct xt_ct_target_info_v1 *info)
 {
 	struct nf_conntrack_zone zone;
+	struct nf_conn_help *help;
 	struct nf_conn *ct;
 	int ret = -EOPNOTSUPP;
 
@@ -249,7 +253,7 @@ static int xt_ct_tg_check(const struct xt_tgchk_param *par,
 	if (info->timeout[0]) {
 		ret = xt_ct_set_timeout(ct, par, info->timeout);
 		if (ret < 0)
-			goto err3;
+			goto err4;
 	}
 	__set_bit(IPS_CONFIRMED_BIT, &ct->status);
 	nf_conntrack_get(&ct->ct_general);
@@ -257,6 +261,10 @@ out:
 	info->ct = ct;
 	return 0;
 
+err4:
+	help = nfct_help(ct);
+	if (help)
+		nf_conntrack_helper_put(help->helper);
 err3:
 	nf_ct_tmpl_free(ct);
 err2:
@@ -339,7 +347,7 @@ static void xt_ct_tg_destroy(const struct xt_tgdtor_param *par,
 	if (ct) {
 		help = nfct_help(ct);
 		if (help)
-			module_put(help->helper->me);
+			nf_conntrack_helper_put(help->helper);
 
 		nf_ct_netns_put(par->net, par->family);
 

@@ -67,7 +67,6 @@
 #include "iwl-trans.h"
 #include "mvm.h"
 #include "fw-api.h"
-#include "fw-dbg.h"
 
 /*
  * iwl_mvm_rx_rx_phy_cmd - REPLY_RX_PHY_CMD handler
@@ -133,7 +132,7 @@ static void iwl_mvm_pass_packet_to_mac80211(struct iwl_mvm *mvm,
 	 */
 	hdrlen = (len <= skb_tailroom(skb)) ? len : hdrlen + crypt_len + 8;
 
-	memcpy(skb_put(skb, hdrlen), hdr, hdrlen);
+	skb_put_data(skb, hdr, hdrlen);
 	fraglen = len - hdrlen;
 
 	if (fraglen) {
@@ -223,7 +222,9 @@ static u32 iwl_mvm_set_mac80211_rx_flag(struct iwl_mvm *mvm,
 
 	case RX_MPDU_RES_STATUS_SEC_TKIP_ENC:
 		/* Don't drop the frame and decrypt it in SW */
-		if (!(rx_pkt_status & RX_MPDU_RES_STATUS_TTAK_OK))
+		if (!fw_has_api(&mvm->fw->ucode_capa,
+				IWL_UCODE_TLV_API_DEPRECATE_TTAK) &&
+		    !(rx_pkt_status & RX_MPDU_RES_STATUS_TTAK_OK))
 			return 0;
 		*crypt_len = IEEE80211_TKIP_IV_LEN;
 		/* fall through if TTAK OK */
@@ -245,7 +246,9 @@ static u32 iwl_mvm_set_mac80211_rx_flag(struct iwl_mvm *mvm,
 		return 0;
 
 	default:
-		IWL_ERR(mvm, "Unhandled alg: 0x%x\n", rx_pkt_status);
+		/* Expected in monitor (not having the keys) */
+		if (!mvm->monitor_on)
+			IWL_ERR(mvm, "Unhandled alg: 0x%x\n", rx_pkt_status);
 	}
 
 	return 0;
@@ -382,7 +385,7 @@ void iwl_mvm_rx_rx_mpdu(struct iwl_mvm *mvm, struct napi_struct *napi,
 								 false);
 		}
 
-		rs_update_last_rssi(mvm, &mvmsta->lq_sta, rx_status);
+		rs_update_last_rssi(mvm, mvmsta, rx_status);
 
 		if (iwl_fw_dbg_trigger_enabled(mvm->fw, FW_DBG_TRIGGER_RSSI) &&
 		    ieee80211_is_beacon(hdr->frame_control)) {
@@ -397,10 +400,12 @@ void iwl_mvm_rx_rx_mpdu(struct iwl_mvm *mvm, struct napi_struct *napi,
 			rssi = le32_to_cpu(rssi_trig->rssi);
 
 			trig_check =
-				iwl_fw_dbg_trigger_check_stop(mvm, mvmsta->vif,
+				iwl_fw_dbg_trigger_check_stop(&mvm->fwrt,
+							      ieee80211_vif_to_wdev(mvmsta->vif),
 							      trig);
 			if (trig_check && rx_status->signal < rssi)
-				iwl_mvm_fw_dbg_collect_trig(mvm, trig, NULL);
+				iwl_fw_dbg_collect_trig(&mvm->fwrt, trig,
+							NULL);
 		}
 
 		if (ieee80211_is_data(hdr->frame_control))
@@ -436,7 +441,8 @@ void iwl_mvm_rx_rx_mpdu(struct iwl_mvm *mvm, struct napi_struct *napi,
 		rx_status->bw = RATE_INFO_BW_160;
 		break;
 	}
-	if (rate_n_flags & RATE_MCS_SGI_MSK)
+	if (!(rate_n_flags & RATE_MCS_CCK_MSK) &&
+	    rate_n_flags & RATE_MCS_SGI_MSK)
 		rx_status->enc_flags |= RX_ENC_FLAG_SHORT_GI;
 	if (rate_n_flags & RATE_HT_MCS_GF_MSK)
 		rx_status->enc_flags |= RX_ENC_FLAG_HT_GF;
@@ -504,14 +510,6 @@ void iwl_mvm_rx_rx_mpdu(struct iwl_mvm *mvm, struct napi_struct *napi,
 		iwl_mvm_unref(mvm, IWL_MVM_REF_RX);
 }
 
-static void iwl_mvm_update_rx_statistics(struct iwl_mvm *mvm,
-					 struct mvm_statistics_rx *rx_stats)
-{
-	lockdep_assert_held(&mvm->mutex);
-
-	mvm->rx_stats = *rx_stats;
-}
-
 struct iwl_mvm_stat_data {
 	struct iwl_mvm *mvm;
 	__le32 mac_id;
@@ -555,7 +553,6 @@ static void iwl_mvm_stat_iterator(void *_data, u8 *mac,
 			mvmvif->beacon_stats.avg_signal =
 				-general->beacon_average_energy[vif_id];
 		}
-
 	}
 
 	if (mvmvif->id != id)
@@ -633,7 +630,7 @@ iwl_mvm_rx_stats_check_trigger(struct iwl_mvm *mvm, struct iwl_rx_packet *pkt)
 	trig = iwl_fw_dbg_get_trigger(mvm->fw, FW_DBG_TRIGGER_STATS);
 	trig_stats = (void *)trig->data;
 
-	if (!iwl_fw_dbg_trigger_check_stop(mvm, NULL, trig))
+	if (!iwl_fw_dbg_trigger_check_stop(&mvm->fwrt, NULL, trig))
 		return;
 
 	trig_offset = le32_to_cpu(trig_stats->stop_offset);
@@ -645,13 +642,12 @@ iwl_mvm_rx_stats_check_trigger(struct iwl_mvm *mvm, struct iwl_rx_packet *pkt)
 	if (le32_to_cpup((__le32 *) (pkt->data + trig_offset)) < trig_thold)
 		return;
 
-	iwl_mvm_fw_dbg_collect_trig(mvm, trig, NULL);
+	iwl_fw_dbg_collect_trig(&mvm->fwrt, trig, NULL);
 }
 
 void iwl_mvm_handle_rx_statistics(struct iwl_mvm *mvm,
 				  struct iwl_rx_packet *pkt)
 {
-	struct iwl_notif_statistics_cdb *stats = (void *)&pkt->data;
 	struct iwl_mvm_stat_data data = {
 		.mvm = mvm,
 	};
@@ -659,34 +655,65 @@ void iwl_mvm_handle_rx_statistics(struct iwl_mvm *mvm,
 	int i;
 	u8 *energy;
 	__le32 *bytes, *air_time;
+	__le32 flags;
 
-	if (iwl_mvm_is_cdb_supported(mvm))
-		expected_size = sizeof(*stats);
-	else if (iwl_mvm_has_new_rx_api(mvm))
-		expected_size = sizeof(struct iwl_notif_statistics_v11);
-	else
-		expected_size = sizeof(struct iwl_notif_statistics_v10);
-
-	if (iwl_rx_packet_payload_len(pkt) != expected_size) {
-		IWL_ERR(mvm, "received invalid statistics size (%d)!\n",
-			iwl_rx_packet_payload_len(pkt));
-		return;
+	if (!iwl_mvm_has_new_rx_stats_api(mvm)) {
+		if (iwl_mvm_has_new_rx_api(mvm))
+			expected_size = sizeof(struct iwl_notif_statistics_v11);
+		else
+			expected_size = sizeof(struct iwl_notif_statistics_v10);
+	} else {
+		expected_size = sizeof(struct iwl_notif_statistics_cdb);
 	}
 
-	data.mac_id = stats->rx.general.mac_id;
-	data.beacon_filter_average_energy =
-		stats->general.common.beacon_filter_average_energy;
+	if (WARN_ONCE(iwl_rx_packet_payload_len(pkt) != expected_size,
+		      "received invalid statistics size (%d)!\n",
+		      iwl_rx_packet_payload_len(pkt)))
+		return;
 
-	iwl_mvm_update_rx_statistics(mvm, &stats->rx);
+	if (!iwl_mvm_has_new_rx_stats_api(mvm)) {
+		struct iwl_notif_statistics_v11 *stats = (void *)&pkt->data;
 
-	mvm->radio_stats.rx_time = le64_to_cpu(stats->general.common.rx_time);
-	mvm->radio_stats.tx_time = le64_to_cpu(stats->general.common.tx_time);
-	mvm->radio_stats.on_time_rf =
-		le64_to_cpu(stats->general.common.on_time_rf);
-	mvm->radio_stats.on_time_scan =
-		le64_to_cpu(stats->general.common.on_time_scan);
+		data.mac_id = stats->rx.general.mac_id;
+		data.beacon_filter_average_energy =
+			stats->general.common.beacon_filter_average_energy;
 
-	data.general = &stats->general;
+		mvm->rx_stats_v3 = stats->rx;
+
+		mvm->radio_stats.rx_time =
+			le64_to_cpu(stats->general.common.rx_time);
+		mvm->radio_stats.tx_time =
+			le64_to_cpu(stats->general.common.tx_time);
+		mvm->radio_stats.on_time_rf =
+			le64_to_cpu(stats->general.common.on_time_rf);
+		mvm->radio_stats.on_time_scan =
+			le64_to_cpu(stats->general.common.on_time_scan);
+
+		data.general = &stats->general;
+
+		flags = stats->flag;
+	} else {
+		struct iwl_notif_statistics_cdb *stats = (void *)&pkt->data;
+
+		data.mac_id = stats->rx.general.mac_id;
+		data.beacon_filter_average_energy =
+			stats->general.common.beacon_filter_average_energy;
+
+		mvm->rx_stats = stats->rx;
+
+		mvm->radio_stats.rx_time =
+			le64_to_cpu(stats->general.common.rx_time);
+		mvm->radio_stats.tx_time =
+			le64_to_cpu(stats->general.common.tx_time);
+		mvm->radio_stats.on_time_rf =
+			le64_to_cpu(stats->general.common.on_time_rf);
+		mvm->radio_stats.on_time_scan =
+			le64_to_cpu(stats->general.common.on_time_scan);
+
+		data.general = &stats->general;
+
+		flags = stats->flag;
+	}
 
 	iwl_mvm_rx_stats_check_trigger(mvm, pkt);
 
@@ -698,14 +725,15 @@ void iwl_mvm_handle_rx_statistics(struct iwl_mvm *mvm,
 	if (!iwl_mvm_has_new_rx_api(mvm))
 		return;
 
-	if (!iwl_mvm_is_cdb_supported(mvm)) {
-		struct iwl_notif_statistics_v11 *v11 =
-			(void *)&pkt->data;
+	if (!iwl_mvm_has_new_rx_stats_api(mvm)) {
+		struct iwl_notif_statistics_v11 *v11 = (void *)&pkt->data;
 
 		energy = (void *)&v11->load_stats.avg_energy;
 		bytes = (void *)&v11->load_stats.byte_count;
 		air_time = (void *)&v11->load_stats.air_time;
 	} else {
+		struct iwl_notif_statistics_cdb *stats = (void *)&pkt->data;
+
 		energy = (void *)&stats->load_stats.avg_energy;
 		bytes = (void *)&stats->load_stats.byte_count;
 		air_time = (void *)&stats->load_stats.air_time;

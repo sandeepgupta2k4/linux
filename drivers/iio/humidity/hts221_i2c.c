@@ -66,22 +66,8 @@ static const struct hts221_transfer_function hts221_transfer_fn = {
 static int hts221_i2c_probe(struct i2c_client *client,
 			    const struct i2c_device_id *id)
 {
-	struct hts221_hw *hw;
-	struct iio_dev *iio_dev;
-
-	iio_dev = devm_iio_device_alloc(&client->dev, sizeof(*hw));
-	if (!iio_dev)
-		return -ENOMEM;
-
-	i2c_set_clientdata(client, iio_dev);
-
-	hw = iio_priv(iio_dev);
-	hw->name = client->name;
-	hw->dev = &client->dev;
-	hw->irq = client->irq;
-	hw->tf = &hts221_transfer_fn;
-
-	return hts221_probe(iio_dev);
+	return hts221_probe(&client->dev, client->irq,
+			    client->name, &hts221_transfer_fn);
 }
 
 static const struct acpi_device_id hts221_acpi_match[] = {
@@ -105,6 +91,7 @@ MODULE_DEVICE_TABLE(i2c, hts221_i2c_id_table);
 static struct i2c_driver hts221_driver = {
 	.driver = {
 		.name = "hts221_i2c",
+		.pm = &hts221_pm_ops,
 		.of_match_table = of_match_ptr(hts221_i2c_of_match),
 		.acpi_match_table = ACPI_PTR(hts221_acpi_match),
 	},

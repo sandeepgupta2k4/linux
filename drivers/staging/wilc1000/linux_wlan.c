@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "wilc_wfi_cfgoperations.h"
 #include "wilc_wlan_if.h"
 #include "wilc_wlan.h"
@@ -283,7 +284,8 @@ int wilc_wlan_get_num_conn_ifcs(struct wilc *wilc)
 
 static int linux_wlan_txq_task(void *vp)
 {
-	int ret, txq_count;
+	int ret;
+	u32 txq_count;
 	struct wilc_vif *vif;
 	struct wilc *wl;
 	struct net_device *dev = vp;
@@ -693,7 +695,7 @@ static int wlan_initialize_threads(struct net_device *dev)
 	wilc = vif->wilc;
 
 	wilc->txq_thread = kthread_run(linux_wlan_txq_task, (void *)dev,
-				     "K_TXQ_TASK");
+				       "K_TXQ_TASK");
 	if (IS_ERR(wilc->txq_thread)) {
 		netdev_err(dev, "couldn't create TXQ thread\n");
 		wilc->close = 0;
@@ -812,7 +814,7 @@ _fail_wilc_wlan_:
 		wilc_wlan_cleanup(dev);
 _fail_locks_:
 		wlan_deinit_locks(dev);
-		netdev_err(dev, "WLAN Iinitialization FAILED\n");
+		netdev_err(dev, "WLAN initialization FAILED\n");
 	} else {
 		netdev_dbg(dev, "wilc1000 already initialized\n");
 	}
@@ -858,34 +860,15 @@ static int wilc_mac_open(struct net_device *ndev)
 
 	for (i = 0; i < wl->vif_num; i++) {
 		if (ndev == wl->vif[i]->ndev) {
-			if (vif->iftype == AP_MODE) {
-				wilc_set_wfi_drv_handler(vif,
-							 wilc_get_vif_idx(vif),
-							 0);
-			} else if (!wilc_wlan_get_num_conn_ifcs(wl)) {
-				wilc_set_wfi_drv_handler(vif,
-							 wilc_get_vif_idx(vif),
-							 wl->open_ifcs);
-			} else {
-				if (memcmp(wl->vif[i ^ 1]->bssid,
-					   wl->vif[i ^ 1]->src_addr, 6))
-					wilc_set_wfi_drv_handler(vif,
-							 wilc_get_vif_idx(vif),
-							 0);
-				else
-					wilc_set_wfi_drv_handler(vif,
-							 wilc_get_vif_idx(vif),
-							 1);
-			}
+			wilc_set_wfi_drv_handler(vif, wilc_get_vif_idx(vif),
+						 vif->iftype, vif->ifc_id);
 			wilc_set_operation_mode(vif, vif->iftype);
-
-			wilc_get_mac_address(vif, mac_add);
-			netdev_dbg(ndev, "Mac address: %pM\n", mac_add);
-			memcpy(wl->vif[i]->src_addr, mac_add, ETH_ALEN);
-
 			break;
 		}
 	}
+			wilc_get_mac_address(vif, mac_add);
+			netdev_dbg(ndev, "Mac address: %pM\n", mac_add);
+			memcpy(wl->vif[i]->src_addr, mac_add, ETH_ALEN);
 
 	memcpy(ndev->dev_addr, wl->vif[i]->src_addr, ETH_ALEN);
 
@@ -928,13 +911,13 @@ static void wilc_set_multicast_list(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC)
 		return;
 
-	if ((dev->flags & IFF_ALLMULTI) ||
-	    (dev->mc.count) > WILC_MULTICAST_TABLE_SIZE) {
+	if (dev->flags & IFF_ALLMULTI ||
+	    dev->mc.count > WILC_MULTICAST_TABLE_SIZE) {
 		wilc_setup_multicast_filter(vif, false, 0);
 		return;
 	}
 
-	if ((dev->mc.count) == 0) {
+	if (dev->mc.count == 0) {
 		wilc_setup_multicast_filter(vif, true, 0);
 		return;
 	}
@@ -1047,7 +1030,7 @@ static int wilc_mac_close(struct net_device *ndev)
 	if (!hif_drv)
 		return 0;
 
-	if ((wl->open_ifcs) > 0)
+	if (wl->open_ifcs > 0)
 		wl->open_ifcs--;
 	else
 		return 0;
@@ -1074,7 +1057,7 @@ static int mac_ioctl(struct net_device *ndev, struct ifreq *req, int cmd)
 {
 	u8 *buff = NULL;
 	s8 rssi;
-	u32 size = 0, length = 0;
+	u32 size = 0;
 	struct wilc_vif *vif;
 	s32 ret = 0;
 	struct wilc *wilc;
@@ -1098,7 +1081,7 @@ static int mac_ioctl(struct net_device *ndev, struct ifreq *req, int cmd)
 			if (IS_ERR(buff))
 				return PTR_ERR(buff);
 
-			if (strncasecmp(buff, "RSSI", length) == 0) {
+			if (strncasecmp(buff, "RSSI", size) == 0) {
 				ret = wilc_get_rssi(vif, &rssi);
 				netdev_info(ndev, "RSSI :%d\n", rssi);
 
@@ -1160,7 +1143,7 @@ void wilc_frmw_to_linux(struct wilc *wilc, u8 *buff, u32 size, u32 pkt_offset)
 
 		skb->dev = wilc_netdev;
 
-		memcpy(skb_put(skb, frame_len), buff_to_send, frame_len);
+		skb_put_data(skb, buff_to_send, frame_len);
 
 		skb->protocol = eth_type_trans(skb, wilc_netdev);
 		vif->netstats.rx_packets++;
@@ -1246,16 +1229,19 @@ int wilc_netdev_init(struct wilc **wilc, struct device *dev, int io_type,
 		vif = netdev_priv(ndev);
 		memset(vif, 0, sizeof(struct wilc_vif));
 
-		if (i == 0)
+		if (i == 0) {
 			strcpy(ndev->name, "wlan%d");
-		else
+			vif->ifc_id = 1;
+		} else {
 			strcpy(ndev->name, "p2p%d");
-
-		vif->idx = wl->vif_num;
+			vif->ifc_id = 0;
+		}
 		vif->wilc = *wilc;
 		vif->ndev = ndev;
 		wl->vif[i] = vif;
 		wl->vif_num = i;
+		vif->idx = wl->vif_num;
+
 		ndev->netdev_ops = &wilc_netdev_ops;
 
 		{

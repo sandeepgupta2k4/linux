@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* net/atm/proc.c - ATM /proc interface
  *
  * Written 1995-2000 by Werner Almesberger, EPFL LRC/ICA
@@ -36,7 +37,6 @@ static ssize_t proc_dev_atm_read(struct file *file, char __user *buf,
 				 size_t count, loff_t *pos);
 
 static const struct file_operations proc_atm_dev_ops = {
-	.owner =	THIS_MODULE,
 	.read =		proc_dev_atm_read,
 	.llseek =	noop_llseek,
 };
@@ -61,7 +61,7 @@ static void atm_dev_info(struct seq_file *seq, const struct atm_dev *dev)
 	add_stats(seq, "0", &dev->stats.aal0);
 	seq_puts(seq, "  ");
 	add_stats(seq, "5", &dev->stats.aal5);
-	seq_printf(seq, "\t[%d]", atomic_read(&dev->refcnt));
+	seq_printf(seq, "\t[%d]", refcount_read(&dev->refcnt));
 	seq_putc(seq, '\n');
 }
 
@@ -211,7 +211,7 @@ static void vcc_info(struct seq_file *seq, struct atm_vcc *vcc)
 		   vcc->flags, sk->sk_err,
 		   sk_wmem_alloc_get(sk), sk->sk_sndbuf,
 		   sk_rmem_alloc_get(sk), sk->sk_rcvbuf,
-		   atomic_read(&sk->sk_refcnt));
+		   refcount_read(&sk->sk_refcnt));
 }
 
 static void svc_info(struct seq_file *seq, struct atm_vcc *vcc)
@@ -474,7 +474,7 @@ int __init atm_proc_init(void)
 	for (e = atm_proc_ents; e->name; e++) {
 		struct proc_dir_entry *dirent;
 
-		dirent = proc_create(e->name, S_IRUGO,
+		dirent = proc_create(e->name, 0444,
 				     atm_proc_root, e->proc_fops);
 		if (!dirent)
 			goto err_out_remove;

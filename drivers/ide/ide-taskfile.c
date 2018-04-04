@@ -232,7 +232,6 @@ void ide_pio_bytes(ide_drive_t *drive, struct ide_cmd *cmd,
 	unsigned int offset;
 	u8 *buf;
 
-	cursg = cmd->cursg;
 	if (cursg == NULL)
 		cursg = cmd->cursg = sg;
 
@@ -318,7 +317,7 @@ static void ide_error_cmd(ide_drive_t *drive, struct ide_cmd *cmd)
 		}
 
 		if (nr_bytes > 0)
-			ide_complete_rq(drive, 0, nr_bytes);
+			ide_complete_rq(drive, BLK_STS_OK, nr_bytes);
 	}
 }
 
@@ -336,7 +335,7 @@ void ide_finish_cmd(ide_drive_t *drive, struct ide_cmd *cmd, u8 stat)
 		ide_driveid_update(drive);
 	}
 
-	ide_complete_rq(drive, err ? -EIO : 0, blk_rq_bytes(rq));
+	ide_complete_rq(drive, err ? BLK_STS_IOERR : BLK_STS_OK, blk_rq_bytes(rq));
 }
 
 /*
@@ -394,7 +393,7 @@ out_end:
 	if ((cmd->tf_flags & IDE_TFLAG_FS) == 0)
 		ide_finish_cmd(drive, cmd, stat);
 	else
-		ide_complete_rq(drive, 0, blk_rq_sectors(cmd->rq) << 9);
+		ide_complete_rq(drive, BLK_STS_OK, blk_rq_sectors(cmd->rq) << 9);
 	return ide_stopped;
 out_err:
 	ide_error_cmd(drive, cmd);
@@ -433,7 +432,6 @@ int ide_raw_taskfile(ide_drive_t *drive, struct ide_cmd *cmd, u8 *buf,
 	rq = blk_get_request(drive->queue,
 		(cmd->tf_flags & IDE_TFLAG_WRITE) ?
 			REQ_OP_DRV_OUT : REQ_OP_DRV_IN, __GFP_RECLAIM);
-	scsi_req_init(rq);
 	ide_req(rq)->type = ATA_PRIV_TASKFILE;
 
 	/*

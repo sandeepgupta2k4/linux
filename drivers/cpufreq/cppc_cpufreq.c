@@ -20,6 +20,7 @@
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/dmi.h>
+#include <linux/time.h>
 #include <linux/vmalloc.h>
 
 #include <asm/unaligned.h>
@@ -144,11 +145,26 @@ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
 
 	cppc_dmi_max_khz = cppc_get_dmi_max_khz();
 
-	policy->min = cpu->perf_caps.lowest_perf * cppc_dmi_max_khz / cpu->perf_caps.highest_perf;
+	/*
+	 * Set min to lowest nonlinear perf to avoid any efficiency penalty (see
+	 * Section 8.4.7.1.1.5 of ACPI 6.1 spec)
+	 */
+	policy->min = cpu->perf_caps.lowest_nonlinear_perf * cppc_dmi_max_khz /
+		cpu->perf_caps.highest_perf;
 	policy->max = cppc_dmi_max_khz;
-	policy->cpuinfo.min_freq = policy->min;
-	policy->cpuinfo.max_freq = policy->max;
+
+	/*
+	 * Set cpuinfo.min_freq to Lowest to make the full range of performance
+	 * available if userspace wants to use any perf between lowest & lowest
+	 * nonlinear perf
+	 */
+	policy->cpuinfo.min_freq = cpu->perf_caps.lowest_perf * cppc_dmi_max_khz /
+		cpu->perf_caps.highest_perf;
+	policy->cpuinfo.max_freq = cppc_dmi_max_khz;
+
 	policy->cpuinfo.transition_latency = cppc_get_transition_latency(cpu_num);
+	policy->transition_delay_us = cppc_get_transition_latency(cpu_num) /
+		NSEC_PER_USEC;
 	policy->shared_type = cpu->shared_type;
 
 	if (policy->shared_type == CPUFREQ_SHARED_TYPE_ANY)
@@ -159,7 +175,6 @@ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		return -EFAULT;
 	}
 
-	cpumask_set_cpu(policy->cpu, policy->cpus);
 	cpu->cur_policy = policy;
 
 	/* Set policy->cur to max now. The governors will adjust later. */
@@ -218,8 +233,13 @@ static int __init cppc_cpufreq_init(void)
 	return ret;
 
 out:
-	for_each_possible_cpu(i)
-		kfree(all_cpu_data[i]);
+	for_each_possible_cpu(i) {
+		cpu = all_cpu_data[i];
+		if (!cpu)
+			break;
+		free_cpumask_var(cpu->shared_cpu_map);
+		kfree(cpu);
+	}
 
 	kfree(all_cpu_data);
 	return -ENODEV;

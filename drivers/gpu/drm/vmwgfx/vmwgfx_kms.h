@@ -50,6 +50,7 @@
  * @unit: The current display unit. Set up by the helper before a call to @clip.
  * @cmd: The allocated fifo space. Set up by the helper before the first @clip
  * call.
+ * @crtc: The crtc for which to build dirty commands.
  * @num_hits: Number of clip rect commands for this display unit.
  * Cleared by the helper before the first @clip call. Updated by the @clip
  * callback.
@@ -71,6 +72,7 @@ struct vmw_kms_dirty {
 	struct vmw_private *dev_priv;
 	struct vmw_display_unit *unit;
 	void *cmd;
+	struct drm_crtc *crtc;
 	u32 num_hits;
 	s32 fb_x;
 	s32 fb_y;
@@ -175,7 +177,6 @@ struct vmw_plane_state {
 	int pinned;
 
 	/* For CPU Blit */
-	struct ttm_bo_kmap_obj host_map, guest_map;
 	unsigned int cpp;
 };
 
@@ -240,6 +241,11 @@ struct vmw_display_unit {
 	int set_gui_y;
 };
 
+struct vmw_validation_ctx {
+	struct vmw_resource *res;
+	struct vmw_dma_buffer *buf;
+};
+
 #define vmw_crtc_to_du(x) \
 	container_of(x, struct vmw_display_unit, crtc)
 #define vmw_connector_to_du(x) \
@@ -256,10 +262,6 @@ int vmw_du_crtc_gamma_set(struct drm_crtc *crtc,
 			   u16 *r, u16 *g, u16 *b,
 			   uint32_t size,
 			   struct drm_modeset_acquire_ctx *ctx);
-int vmw_du_crtc_cursor_set2(struct drm_crtc *crtc, struct drm_file *file_priv,
-			    uint32_t handle, uint32_t width, uint32_t height,
-			    int32_t hot_x, int32_t hot_y);
-int vmw_du_crtc_cursor_move(struct drm_crtc *crtc, int x, int y);
 int vmw_du_connector_set_property(struct drm_connector *connector,
 				  struct drm_property *property,
 				  uint64_t val);
@@ -291,7 +293,8 @@ int vmw_kms_helper_dirty(struct vmw_private *dev_priv,
 int vmw_kms_helper_buffer_prepare(struct vmw_private *dev_priv,
 				  struct vmw_dma_buffer *buf,
 				  bool interruptible,
-				  bool validate_as_mob);
+				  bool validate_as_mob,
+				  bool for_cpu_blit);
 void vmw_kms_helper_buffer_revert(struct vmw_dma_buffer *buf);
 void vmw_kms_helper_buffer_finish(struct vmw_private *dev_priv,
 				  struct drm_file *file_priv,
@@ -300,9 +303,10 @@ void vmw_kms_helper_buffer_finish(struct vmw_private *dev_priv,
 				  struct drm_vmw_fence_rep __user *
 				  user_fence_rep);
 int vmw_kms_helper_resource_prepare(struct vmw_resource *res,
-				    bool interruptible);
-void vmw_kms_helper_resource_revert(struct vmw_resource *res);
-void vmw_kms_helper_resource_finish(struct vmw_resource *res,
+				    bool interruptible,
+				    struct vmw_validation_ctx *ctx);
+void vmw_kms_helper_resource_revert(struct vmw_validation_ctx *ctx);
+void vmw_kms_helper_resource_finish(struct vmw_validation_ctx *ctx,
 				    struct vmw_fence_obj **out_fence);
 int vmw_kms_readback(struct vmw_private *dev_priv,
 		     struct drm_file *file_priv,
@@ -339,15 +343,6 @@ void vmw_kms_create_implicit_placement_property(struct vmw_private *dev_priv,
 /* Universal Plane Helpers */
 void vmw_du_primary_plane_destroy(struct drm_plane *plane);
 void vmw_du_cursor_plane_destroy(struct drm_plane *plane);
-int vmw_du_cursor_plane_disable(struct drm_plane *plane);
-int vmw_du_cursor_plane_update(struct drm_plane *plane,
-			       struct drm_crtc *crtc,
-			       struct drm_framebuffer *fb,
-			       int crtc_x, int crtc_y,
-			       unsigned int crtc_w,
-			       unsigned int crtc_h,
-			       uint32_t src_x, uint32_t src_y,
-			       uint32_t src_w, uint32_t src_h);
 
 /* Atomic Helpers */
 int vmw_du_primary_plane_atomic_check(struct drm_plane *plane,
@@ -356,8 +351,6 @@ int vmw_du_cursor_plane_atomic_check(struct drm_plane *plane,
 				     struct drm_plane_state *state);
 void vmw_du_cursor_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_plane_state *old_state);
-void vmw_du_cursor_plane_atomic_disable(struct drm_plane *plane,
-					struct drm_plane_state *old_state);
 int vmw_du_cursor_plane_prepare_fb(struct drm_plane *plane,
 				   struct drm_plane_state *new_state);
 void vmw_du_plane_cleanup_fb(struct drm_plane *plane,
@@ -405,7 +398,6 @@ int vmw_kms_update_proxy(struct vmw_resource *res,
  * Screen Objects display functions - vmwgfx_scrn.c
  */
 int vmw_kms_sou_init_display(struct vmw_private *dev_priv);
-int vmw_kms_sou_close_display(struct vmw_private *dev_priv);
 int vmw_kms_sou_do_surface_dirty(struct vmw_private *dev_priv,
 				 struct vmw_framebuffer *framebuffer,
 				 struct drm_clip_rect *clips,
@@ -414,26 +406,28 @@ int vmw_kms_sou_do_surface_dirty(struct vmw_private *dev_priv,
 				 s32 dest_x,
 				 s32 dest_y,
 				 unsigned num_clips, int inc,
-				 struct vmw_fence_obj **out_fence);
+				 struct vmw_fence_obj **out_fence,
+				 struct drm_crtc *crtc);
 int vmw_kms_sou_do_dmabuf_dirty(struct vmw_private *dev_priv,
 				struct vmw_framebuffer *framebuffer,
 				struct drm_clip_rect *clips,
 				struct drm_vmw_rect *vclips,
 				unsigned num_clips, int increment,
 				bool interruptible,
-				struct vmw_fence_obj **out_fence);
+				struct vmw_fence_obj **out_fence,
+				struct drm_crtc *crtc);
 int vmw_kms_sou_readback(struct vmw_private *dev_priv,
 			 struct drm_file *file_priv,
 			 struct vmw_framebuffer *vfb,
 			 struct drm_vmw_fence_rep __user *user_fence_rep,
 			 struct drm_vmw_rect *vclips,
-			 uint32_t num_clips);
+			 uint32_t num_clips,
+			 struct drm_crtc *crtc);
 
 /*
  * Screen Target Display Unit functions - vmwgfx_stdu.c
  */
 int vmw_kms_stdu_init_display(struct vmw_private *dev_priv);
-int vmw_kms_stdu_close_display(struct vmw_private *dev_priv);
 int vmw_kms_stdu_surface_dirty(struct vmw_private *dev_priv,
 			       struct vmw_framebuffer *framebuffer,
 			       struct drm_clip_rect *clips,
@@ -442,7 +436,8 @@ int vmw_kms_stdu_surface_dirty(struct vmw_private *dev_priv,
 			       s32 dest_x,
 			       s32 dest_y,
 			       unsigned num_clips, int inc,
-			       struct vmw_fence_obj **out_fence);
+			       struct vmw_fence_obj **out_fence,
+			       struct drm_crtc *crtc);
 int vmw_kms_stdu_dma(struct vmw_private *dev_priv,
 		     struct drm_file *file_priv,
 		     struct vmw_framebuffer *vfb,
@@ -452,9 +447,9 @@ int vmw_kms_stdu_dma(struct vmw_private *dev_priv,
 		     uint32_t num_clips,
 		     int increment,
 		     bool to_surface,
-		     bool interruptible);
+		     bool interruptible,
+		     struct drm_crtc *crtc);
 
 int vmw_kms_set_config(struct drm_mode_set *set,
 		       struct drm_modeset_acquire_ctx *ctx);
-
 #endif

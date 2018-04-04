@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -62,7 +63,7 @@ struct osc_async_page {
 	struct list_head	      oap_rpc_item;
 
 	u64		 oap_obj_off;
-	unsigned		oap_page_off;
+	unsigned int		oap_page_off;
 	enum async_flags	oap_async_flags;
 
 	struct brw_page	 oap_brw_page;
@@ -99,7 +100,7 @@ void osc_update_next_shrink(struct client_obd *cli);
 /*
  * cl integration.
  */
-#include "../include/cl_object.h"
+#include <cl_object.h>
 
 extern struct ptlrpc_request_set *PTLRPCD_SET;
 
@@ -133,7 +134,8 @@ int osc_build_rpc(const struct lu_env *env, struct client_obd *cli,
 		  struct list_head *ext_list, int cmd);
 long osc_lru_shrink(const struct lu_env *env, struct client_obd *cli,
 		    long target, bool force);
-long osc_lru_reclaim(struct client_obd *cli, unsigned long npages);
+unsigned long osc_lru_reserve(struct client_obd *cli, unsigned long npages);
+void osc_lru_unreserve(struct client_obd *cli, unsigned long npages);
 
 unsigned long osc_ldlm_weigh_ast(struct ldlm_lock *dlmlock);
 
@@ -166,9 +168,9 @@ struct osc_device {
 
 	/* Write stats is actually protected by client_obd's lock. */
 	struct osc_stats {
-		uint64_t     os_lockless_writes;	  /* by bytes */
-		uint64_t     os_lockless_reads;	   /* by bytes */
-		uint64_t     os_lockless_truncates;       /* by times */
+		u64	os_lockless_writes;	  /* by bytes */
+		u64	os_lockless_reads;	  /* by bytes */
+		u64	os_lockless_truncates;    /* by times */
 	} od_stats;
 
 	/* configuration item(s) */

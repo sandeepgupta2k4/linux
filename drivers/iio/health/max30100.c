@@ -420,7 +420,6 @@ static int max30100_read_raw(struct iio_dev *indio_dev,
 }
 
 static const struct iio_info max30100_info = {
-	.driver_module = THIS_MODULE,
 	.read_raw = max30100_read_raw,
 };
 
@@ -449,6 +448,7 @@ static int max30100_probe(struct i2c_client *client,
 	indio_dev->available_scan_masks = max30100_scan_masks;
 	indio_dev->modes = (INDIO_BUFFER_SOFTWARE | INDIO_DIRECT_MODE);
 	indio_dev->setup_ops = &max30100_buffer_setup_ops;
+	indio_dev->dev.parent = &client->dev;
 
 	data = iio_priv(indio_dev);
 	data->indio_dev = indio_dev;

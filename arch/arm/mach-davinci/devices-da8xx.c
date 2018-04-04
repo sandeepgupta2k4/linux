@@ -252,7 +252,7 @@ int __init da830_register_edma(struct edma_rsv_info *rsv)
 	da8xx_edma0_pdata.slavecnt = ARRAY_SIZE(da830_edma_map);
 
 	edma_pdev = platform_device_register_full(&da8xx_edma0_device);
-	return IS_ERR(edma_pdev) ? PTR_ERR(edma_pdev) : 0;
+	return PTR_ERR_OR_ZERO(edma_pdev);
 }
 
 static const struct dma_slave_map da850_edma0_map[] = {
@@ -297,7 +297,7 @@ int __init da850_register_edma(struct edma_rsv_info *rsv[2])
 	da850_edma1_pdata.slavecnt = ARRAY_SIZE(da850_edma1_map);
 
 	edma_pdev = platform_device_register_full(&da850_edma1_device);
-	return IS_ERR(edma_pdev) ? PTR_ERR(edma_pdev) : 0;
+	return PTR_ERR_OR_ZERO(edma_pdev);
 }
 
 static struct resource da8xx_i2c_resources0[] = {
@@ -789,13 +789,33 @@ int __init da850_register_mmcsd1(struct davinci_mmc_config *config)
 
 static struct resource da8xx_rproc_resources[] = {
 	{ /* DSP boot address */
+		.name		= "host1cfg",
 		.start		= DA8XX_SYSCFG0_BASE + DA8XX_HOST1CFG_REG,
 		.end		= DA8XX_SYSCFG0_BASE + DA8XX_HOST1CFG_REG + 3,
 		.flags		= IORESOURCE_MEM,
 	},
 	{ /* DSP interrupt registers */
+		.name		= "chipsig",
 		.start		= DA8XX_SYSCFG0_BASE + DA8XX_CHIPSIG_REG,
 		.end		= DA8XX_SYSCFG0_BASE + DA8XX_CHIPSIG_REG + 7,
+		.flags		= IORESOURCE_MEM,
+	},
+	{ /* DSP L2 RAM */
+		.name		= "l2sram",
+		.start		= DA8XX_DSP_L2_RAM_BASE,
+		.end		= DA8XX_DSP_L2_RAM_BASE + SZ_256K - 1,
+		.flags		= IORESOURCE_MEM,
+	},
+	{ /* DSP L1P RAM */
+		.name		= "l1pram",
+		.start		= DA8XX_DSP_L1P_RAM_BASE,
+		.end		= DA8XX_DSP_L1P_RAM_BASE + SZ_32K - 1,
+		.flags		= IORESOURCE_MEM,
+	},
+	{ /* DSP L1D RAM */
+		.name		= "l1dram",
+		.start		= DA8XX_DSP_L1D_RAM_BASE,
+		.end		= DA8XX_DSP_L1D_RAM_BASE + SZ_32K - 1,
 		.flags		= IORESOURCE_MEM,
 	},
 	{ /* dsp irq */
@@ -813,6 +833,8 @@ static struct platform_device da8xx_dsp = {
 	.num_resources	= ARRAY_SIZE(da8xx_rproc_resources),
 	.resource	= da8xx_rproc_resources,
 };
+
+static bool rproc_mem_inited __initdata;
 
 #if IS_ENABLED(CONFIG_DA8XX_REMOTEPROC)
 
@@ -852,6 +874,8 @@ void __init da8xx_rproc_reserve_cma(void)
 	ret = dma_declare_contiguous(&da8xx_dsp.dev, rproc_size, rproc_base, 0);
 	if (ret)
 		pr_err("%s: dma_declare_contiguous failed %d\n", __func__, ret);
+	else
+		rproc_mem_inited = true;
 }
 
 #else
@@ -865,6 +889,12 @@ void __init da8xx_rproc_reserve_cma(void)
 int __init da8xx_register_rproc(void)
 {
 	int ret;
+
+	if (!rproc_mem_inited) {
+		pr_warn("%s: memory not reserved for DSP, not registering DSP device\n",
+			__func__);
+		return -ENOMEM;
+	}
 
 	ret = platform_device_register(&da8xx_dsp);
 	if (ret)

@@ -22,7 +22,8 @@
 
 #define UARTA_3390		REG_PHYS_ADDR(0x40a900)
 #define UARTA_7250		REG_PHYS_ADDR(0x40b400)
-#define UARTA_7268		REG_PHYS_ADDR(0x40c000)
+#define UARTA_7260		REG_PHYS_ADDR(0x40c000)
+#define UARTA_7268		UARTA_7260
 #define UARTA_7271		UARTA_7268
 #define UARTA_7364		REG_PHYS_ADDR(0x40b000)
 #define UARTA_7366		UARTA_7364
@@ -57,18 +58,20 @@
 		/* Check SUN_TOP_CTRL base */
 		ldr	\rp, =SUN_TOP_CTRL_BASE	@ load SUN_TOP_CTRL PA
 		ldr	\rv, [\rp, #0]		@ get register contents
+ARM_BE8(	rev	\rv, \rv )
 		and	\rv, \rv, #0xffffff00	@ strip revision bits [7:0]
 
 		/* Chip specific detection starts here */
 20:		checkuart(\rp, \rv, 0x33900000, 3390)
 21:		checkuart(\rp, \rv, 0x72500000, 7250)
-22:		checkuart(\rp, \rv, 0x72680000, 7268)
-23:		checkuart(\rp, \rv, 0x72710000, 7271)
-24:		checkuart(\rp, \rv, 0x73640000, 7364)
-25:		checkuart(\rp, \rv, 0x73660000, 7366)
-26:		checkuart(\rp, \rv, 0x07437100, 74371)
-27:		checkuart(\rp, \rv, 0x74390000, 7439)
-28:		checkuart(\rp, \rv, 0x74450000, 7445)
+22:		checkuart(\rp, \rv, 0x72600000, 7260)
+23:		checkuart(\rp, \rv, 0x72680000, 7268)
+24:		checkuart(\rp, \rv, 0x72710000, 7271)
+25:		checkuart(\rp, \rv, 0x73640000, 7364)
+26:		checkuart(\rp, \rv, 0x73660000, 7366)
+27:		checkuart(\rp, \rv, 0x07437100, 74371)
+28:		checkuart(\rp, \rv, 0x74390000, 7439)
+29:		checkuart(\rp, \rv, 0x74450000, 7445)
 
 		/* No valid UART found */
 90:		mov	\rp, #0
@@ -96,11 +99,13 @@
 		.endm
 
 		.macro	store, rd, rx:vararg
+ARM_BE8(	rev	\rd, \rd )
 		str	\rd, \rx
 		.endm
 
 		.macro	load, rd, rx:vararg
 		ldr	\rd, \rx
+ARM_BE8(	rev	\rd, \rd )
 		.endm
 
 		.macro	senduart,rd,rx

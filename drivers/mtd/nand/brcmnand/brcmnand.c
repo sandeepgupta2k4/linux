@@ -29,7 +29,7 @@
 #include <linux/bitops.h>
 #include <linux/mm.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
@@ -100,6 +100,9 @@ struct brcm_nand_dma_desc {
 #define BRCMNAND_MIN_PAGESIZE	512
 #define BRCMNAND_MIN_BLOCKSIZE	(8 * 1024)
 #define BRCMNAND_MIN_DEVSIZE	(4ULL * 1024 * 1024)
+
+#define NAND_CTRL_RDY			(INTFC_CTLR_READY | INTFC_FLASH_READY)
+#define NAND_POLL_STATUS_TIMEOUT_MS	100
 
 /* Controller feature flags */
 enum {
@@ -765,6 +768,31 @@ enum {
 	CS_SELECT_AUTO_DEVICE_ID_CFG		= BIT(30),
 };
 
+static int bcmnand_ctrl_poll_status(struct brcmnand_controller *ctrl,
+				    u32 mask, u32 expected_val,
+				    unsigned long timeout_ms)
+{
+	unsigned long limit;
+	u32 val;
+
+	if (!timeout_ms)
+		timeout_ms = NAND_POLL_STATUS_TIMEOUT_MS;
+
+	limit = jiffies + msecs_to_jiffies(timeout_ms);
+	do {
+		val = brcmnand_read_reg(ctrl, BRCMNAND_INTFC_STATUS);
+		if ((val & mask) == expected_val)
+			return 0;
+
+		cpu_relax();
+	} while (time_after(limit, jiffies));
+
+	dev_warn(ctrl->dev, "timeout on status poll (expected %x got %x)\n",
+		 expected_val, val & mask);
+
+	return -ETIMEDOUT;
+}
+
 static inline void brcmnand_set_wp(struct brcmnand_controller *ctrl, bool en)
 {
 	u32 val = en ? CS_SELECT_NAND_WP : 0;
@@ -1024,12 +1052,39 @@ static void brcmnand_wp(struct mtd_info *mtd, int wp)
 
 	if ((ctrl->features & BRCMNAND_HAS_WP) && wp_on == 1) {
 		static int old_wp = -1;
+		int ret;
 
 		if (old_wp != wp) {
 			dev_dbg(ctrl->dev, "WP %s\n", wp ? "on" : "off");
 			old_wp = wp;
 		}
+
+		/*
+		 * make sure ctrl/flash ready before and after
+		 * changing state of #WP pin
+		 */
+		ret = bcmnand_ctrl_poll_status(ctrl, NAND_CTRL_RDY |
+					       NAND_STATUS_READY,
+					       NAND_CTRL_RDY |
+					       NAND_STATUS_READY, 0);
+		if (ret)
+			return;
+
 		brcmnand_set_wp(ctrl, wp);
+		nand_status_op(chip, NULL);
+		/* NAND_STATUS_WP 0x00 = protected, 0x80 = not protected */
+		ret = bcmnand_ctrl_poll_status(ctrl,
+					       NAND_CTRL_RDY |
+					       NAND_STATUS_READY |
+					       NAND_STATUS_WP,
+					       NAND_CTRL_RDY |
+					       NAND_STATUS_READY |
+					       (wp ? 0 : NAND_STATUS_WP), 0);
+
+		if (ret)
+			dev_err_ratelimited(&host->pdev->dev,
+					    "nand #WP expected %s\n",
+					    wp ? "on" : "off");
 	}
 }
 
@@ -1157,15 +1212,15 @@ static irqreturn_t brcmnand_dma_irq(int irq, void *data)
 static void brcmnand_send_cmd(struct brcmnand_host *host, int cmd)
 {
 	struct brcmnand_controller *ctrl = host->ctrl;
-	u32 intfc;
+	int ret;
 
 	dev_dbg(ctrl->dev, "send native cmd %d addr_lo 0x%x\n", cmd,
 		brcmnand_read_reg(ctrl, BRCMNAND_CMD_ADDRESS));
 	BUG_ON(ctrl->cmd_pending != 0);
 	ctrl->cmd_pending = cmd;
 
-	intfc = brcmnand_read_reg(ctrl, BRCMNAND_INTFC_STATUS);
-	WARN_ON(!(intfc & INTFC_CTLR_READY));
+	ret = bcmnand_ctrl_poll_status(ctrl, NAND_CTRL_RDY, NAND_CTRL_RDY, 0);
+	WARN_ON(ret);
 
 	mb(); /* flush previous writes */
 	brcmnand_write_reg(ctrl, BRCMNAND_CMD_START,
@@ -1398,7 +1453,7 @@ static uint8_t brcmnand_read_byte(struct mtd_info *mtd)
 
 		/* At FC_BYTES boundary, switch to next column */
 		if (host->last_byte > 0 && offs == 0)
-			chip->cmdfunc(mtd, NAND_CMD_RNDOUT, addr, -1);
+			nand_change_read_column_op(chip, addr, NULL, 0, false);
 
 		ret = ctrl->flash_cache[offs];
 		break;
@@ -1626,7 +1681,7 @@ static int brcmstb_nand_verify_erased_page(struct mtd_info *mtd,
 	int ret;
 
 	if (!buf) {
-		buf = chip->buffers->databuf;
+		buf = chip->data_buf;
 		/* Invalidate page cache */
 		chip->pagebuf = -1;
 	}
@@ -1634,7 +1689,6 @@ static int brcmstb_nand_verify_erased_page(struct mtd_info *mtd,
 	sas = mtd->oobsize / chip->ecc.steps;
 
 	/* read without ecc for verification */
-	chip->cmdfunc(mtd, NAND_CMD_READ0, 0x00, page);
 	ret = chip->ecc.read_page_raw(mtd, chip, buf, true, page);
 	if (ret)
 		return ret;
@@ -1708,7 +1762,7 @@ try_dmaread:
 			err = brcmstb_nand_verify_erased_page(mtd, chip, buf,
 							      addr);
 			/* erased page bitflips corrected */
-			if (err > 0)
+			if (err >= 0)
 				return err;
 		}
 
@@ -1738,6 +1792,8 @@ static int brcmnand_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 	struct brcmnand_host *host = nand_get_controller_data(chip);
 	u8 *oob = oob_required ? (u8 *)chip->oob_poi : NULL;
 
+	nand_read_page_op(chip, page, 0, NULL, 0);
+
 	return brcmnand_read(mtd, chip, host->last_addr,
 			mtd->writesize >> FC_SHIFT, (u32 *)buf, oob);
 }
@@ -1748,6 +1804,8 @@ static int brcmnand_read_page_raw(struct mtd_info *mtd, struct nand_chip *chip,
 	struct brcmnand_host *host = nand_get_controller_data(chip);
 	u8 *oob = oob_required ? (u8 *)chip->oob_poi : NULL;
 	int ret;
+
+	nand_read_page_op(chip, page, 0, NULL, 0);
 
 	brcmnand_set_ecc_enabled(host, 0);
 	ret = brcmnand_read(mtd, chip, host->last_addr,
@@ -1854,8 +1912,10 @@ static int brcmnand_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 	struct brcmnand_host *host = nand_get_controller_data(chip);
 	void *oob = oob_required ? chip->oob_poi : NULL;
 
+	nand_prog_page_begin_op(chip, page, 0, NULL, 0);
 	brcmnand_write(mtd, chip, host->last_addr, (const u32 *)buf, oob);
-	return 0;
+
+	return nand_prog_page_end_op(chip);
 }
 
 static int brcmnand_write_page_raw(struct mtd_info *mtd,
@@ -1865,10 +1925,12 @@ static int brcmnand_write_page_raw(struct mtd_info *mtd,
 	struct brcmnand_host *host = nand_get_controller_data(chip);
 	void *oob = oob_required ? chip->oob_poi : NULL;
 
+	nand_prog_page_begin_op(chip, page, 0, NULL, 0);
 	brcmnand_set_ecc_enabled(host, 0);
 	brcmnand_write(mtd, chip, host->last_addr, (const u32 *)buf, oob);
 	brcmnand_set_ecc_enabled(host, 1);
-	return 0;
+
+	return nand_prog_page_end_op(chip);
 }
 
 static int brcmnand_write_oob(struct mtd_info *mtd, struct nand_chip *chip,
@@ -2138,16 +2200,9 @@ static int brcmnand_setup_dev(struct brcmnand_host *host)
 	if (ctrl->nand_version >= 0x0702)
 		tmp |= ACC_CONTROL_RD_ERASED;
 	tmp &= ~ACC_CONTROL_FAST_PGM_RDIN;
-	if (ctrl->features & BRCMNAND_HAS_PREFETCH) {
-		/*
-		 * FIXME: Flash DMA + prefetch may see spurious erased-page ECC
-		 * errors
-		 */
-		if (has_flash_dma(ctrl))
-			tmp &= ~ACC_CONTROL_PREFETCH;
-		else
-			tmp |= ACC_CONTROL_PREFETCH;
-	}
+	if (ctrl->features & BRCMNAND_HAS_PREFETCH)
+		tmp &= ~ACC_CONTROL_PREFETCH;
+
 	nand_writereg(ctrl, offs, tmp);
 
 	return 0;
@@ -2175,6 +2230,9 @@ static int brcmnand_init_cs(struct brcmnand_host *host, struct device_node *dn)
 	nand_set_controller_data(chip, host);
 	mtd->name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "brcmnand.%d",
 				   host->cs);
+	if (!mtd->name)
+		return -ENOMEM;
+
 	mtd->owner = THIS_MODULE;
 	mtd->dev.parent = &pdev->dev;
 
@@ -2314,12 +2372,11 @@ static int brcmnand_resume(struct device *dev)
 
 	list_for_each_entry(host, &ctrl->host_list, node) {
 		struct nand_chip *chip = &host->chip;
-		struct mtd_info *mtd = nand_to_mtd(chip);
 
 		brcmnand_save_restore_cs_config(host, 1);
 
 		/* Reset the chip, required by some chips after power-up */
-		chip->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
+		nand_reset_op(chip);
 	}
 
 	return 0;

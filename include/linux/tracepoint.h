@@ -25,10 +25,10 @@ struct module;
 struct tracepoint;
 struct notifier_block;
 
-struct trace_enum_map {
+struct trace_eval_map {
 	const char		*system;
-	const char		*enum_string;
-	unsigned long		enum_value;
+	const char		*eval_string;
+	unsigned long		eval_value;
 };
 
 #define TRACEPOINT_DEFAULT_PRIO	10
@@ -88,6 +88,7 @@ extern void syscall_unregfunc(void);
 #define PARAMS(args...) args
 
 #define TRACE_DEFINE_ENUM(x)
+#define TRACE_DEFINE_SIZEOF(x)
 
 #endif /* _LINUX_TRACEPOINT_H */
 
@@ -136,11 +137,8 @@ extern void syscall_unregfunc(void);
 									\
 		if (!(cond))						\
 			return;						\
-		if (rcucheck) {						\
-			if (WARN_ON_ONCE(rcu_irq_enter_disabled()))	\
-				return;					\
+		if (rcucheck)						\
 			rcu_irq_enter_irqson();				\
-		}							\
 		rcu_read_lock_sched_notrace();				\
 		it_func_ptr = rcu_dereference_sched((tp)->funcs);	\
 		if (it_func_ptr) {					\

@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/vgaarb.h>
 #include <linux/vga_switcheroo.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_fb_helper.h>
 
 #include "nouveau_drv.h"
 #include "nouveau_acpi.h"
@@ -60,7 +62,7 @@ static void
 nouveau_switcheroo_reprobe(struct pci_dev *pdev)
 {
 	struct drm_device *dev = pci_get_drvdata(pdev);
-	nouveau_fbcon_output_poll_changed(dev);
+	drm_fb_helper_output_poll_changed(dev);
 }
 
 static bool
@@ -87,7 +89,7 @@ void
 nouveau_vga_init(struct nouveau_drm *drm)
 {
 	struct drm_device *dev = drm->dev;
-	bool runtime = false;
+	bool runtime = nouveau_pmops_runtime();
 
 	/* only relevant for PCI devices */
 	if (!dev->pdev)
@@ -99,10 +101,6 @@ nouveau_vga_init(struct nouveau_drm *drm)
 	if (pci_is_thunderbolt_attached(dev->pdev))
 		return;
 
-	if (nouveau_runtime_pm == 1)
-		runtime = true;
-	if ((nouveau_runtime_pm == -1) && (nouveau_is_optimus() || nouveau_is_v1_dsm()))
-		runtime = true;
 	vga_switcheroo_register_client(dev->pdev, &nouveau_switcheroo_ops, runtime);
 
 	if (runtime && nouveau_is_v1_dsm() && !nouveau_is_optimus())
@@ -113,17 +111,16 @@ void
 nouveau_vga_fini(struct nouveau_drm *drm)
 {
 	struct drm_device *dev = drm->dev;
-	bool runtime = false;
+	bool runtime = nouveau_pmops_runtime();
+
+	/* only relevant for PCI devices */
+	if (!dev->pdev)
+		return;
 
 	vga_client_register(dev->pdev, NULL, NULL, NULL);
 
 	if (pci_is_thunderbolt_attached(dev->pdev))
 		return;
-
-	if (nouveau_runtime_pm == 1)
-		runtime = true;
-	if ((nouveau_runtime_pm == -1) && (nouveau_is_optimus() || nouveau_is_v1_dsm()))
-		runtime = true;
 
 	vga_switcheroo_unregister_client(dev->pdev);
 	if (runtime && nouveau_is_v1_dsm() && !nouveau_is_optimus())

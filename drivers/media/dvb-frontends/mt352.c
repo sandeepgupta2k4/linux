@@ -33,7 +33,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "mt352_priv.h"
 #include "mt352.h"
 
@@ -211,6 +211,7 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 			if (op->hierarchy == HIERARCHY_AUTO ||
 			    op->hierarchy == HIERARCHY_NONE)
 				break;
+			/* fall through */
 		default:
 			return -EINVAL;
 	}

@@ -14,6 +14,10 @@
 #include <asm-generic/module.h>
 
 
+#ifdef CC_USING_MPROFILE_KERNEL
+#define MODULE_ARCH_VERMAGIC	"mprofile-kernel"
+#endif
+
 #ifndef __powerpc64__
 /*
  * Thanks to Paul M for explaining this.
@@ -41,6 +45,9 @@ struct mod_arch_specific {
 	unsigned long tramp;
 #endif
 
+	/* For module function descriptor dereference */
+	unsigned long start_opd;
+	unsigned long end_opd;
 #else /* powerpc64 */
 	/* Indices of PLT sections within module. */
 	unsigned int core_plt_section;

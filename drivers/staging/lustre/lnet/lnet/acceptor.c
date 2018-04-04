@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -33,7 +34,7 @@
 #define DEBUG_SUBSYSTEM S_LNET
 #include <linux/completion.h>
 #include <net/sock.h>
-#include "../../include/linux/lnet/lib-lnet.h"
+#include <linux/lnet/lib-lnet.h>
 
 static int   accept_port    = 988;
 static int   accept_backlog = 127;
@@ -211,7 +212,7 @@ lnet_accept(struct socket *sock, __u32 magic)
 	int peer_port;
 	int rc;
 	int flip;
-	lnet_ni_t *ni;
+	struct lnet_ni *ni;
 	char *str;
 
 	LASSERT(sizeof(cr) <= 16);	     /* not too big for the stack */

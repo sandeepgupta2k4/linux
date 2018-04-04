@@ -1,8 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file "COPYING" in the main directory of this archive
- * for more details.
- *
  * Copyright (C) 2015, 2016 Cavium, Inc.
  */
 
@@ -373,6 +370,7 @@ static struct platform_driver thunder_ecam_driver = {
 	.driver = {
 		.name = KBUILD_MODNAME,
 		.of_match_table = thunder_ecam_of_match,
+		.suppress_bind_attrs = true,
 	},
 	.probe = thunder_ecam_probe,
 };

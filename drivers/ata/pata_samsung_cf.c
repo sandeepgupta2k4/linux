@@ -505,10 +505,8 @@ static int __init pata_s3c_probe(struct platform_device *pdev)
 	cpu_type = platform_get_device_id(pdev)->driver_data;
 
 	info = devm_kzalloc(dev, sizeof(*info), GFP_KERNEL);
-	if (!info) {
-		dev_err(dev, "failed to allocate memory for device data\n");
+	if (!info)
 		return -ENOMEM;
-	}
 
 	info->irq = platform_get_irq(pdev, 0);
 
@@ -581,8 +579,6 @@ static int __init pata_s3c_probe(struct platform_device *pdev)
 
 	/* Set endianness and enable the interface */
 	pata_s3c_hwinit(info, pdata);
-
-	platform_set_drvdata(pdev, host);
 
 	ret = ata_host_activate(host, info->irq,
 				info->irq ? pata_s3c_irq : NULL,

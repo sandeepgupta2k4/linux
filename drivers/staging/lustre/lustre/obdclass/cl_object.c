@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -46,15 +47,15 @@
 
 #define DEBUG_SUBSYSTEM S_CLASS
 
-#include "../../include/linux/libcfs/libcfs.h"
+#include <linux/libcfs/libcfs.h>
 /* class_put_type() */
-#include "../include/obd_class.h"
-#include "../include/obd_support.h"
-#include "../include/lustre_fid.h"
+#include <obd_class.h>
+#include <obd_support.h>
+#include <lustre_fid.h>
 #include <linux/list.h>
-#include "../../include/linux/libcfs/libcfs_hash.h"	/* for cfs_hash stuff */
-#include "../include/cl_object.h"
-#include "../include/lu_object.h"
+#include <linux/libcfs/libcfs_hash.h>	/* for cfs_hash stuff */
+#include <cl_object.h>
+#include <lu_object.h>
 #include "cl_internal.h"
 
 static struct kmem_cache *cl_env_kmem;
@@ -509,13 +510,13 @@ locks: ...... ...... ...... ...... ...... [...... ...... ...... ...... ......]
  */
 	lu_site_stats_print(&site->cs_lu, m);
 	cache_stats_print(&site->cs_pages, m, 1);
-	seq_printf(m, " [");
+	seq_puts(m, " [");
 	for (i = 0; i < ARRAY_SIZE(site->cs_pages_state); ++i)
 		seq_printf(m, "%s: %u ", pstate[i],
 			   atomic_read(&site->cs_pages_state[i]));
-	seq_printf(m, "]\n");
+	seq_puts(m, "]\n");
 	cache_stats_print(&cl_env_stats, m, 0);
-	seq_printf(m, "\n");
+	seq_puts(m, "\n");
 	return 0;
 }
 EXPORT_SYMBOL(cl_site_stats_print);
@@ -688,7 +689,7 @@ static inline struct cl_env *cl_env_container(struct lu_env *env)
  *
  * \see cl_env_put()
  */
-struct lu_env *cl_env_get(int *refcheck)
+struct lu_env *cl_env_get(u16 *refcheck)
 {
 	struct lu_env *env;
 
@@ -709,7 +710,7 @@ EXPORT_SYMBOL(cl_env_get);
  *
  * \see cl_env_get()
  */
-struct lu_env *cl_env_alloc(int *refcheck, __u32 tags)
+struct lu_env *cl_env_alloc(u16 *refcheck, u32 tags)
 {
 	struct lu_env *env;
 
@@ -769,7 +770,7 @@ EXPORT_SYMBOL(cl_env_cache_purge);
  * this thread is using environment and it is returned to the allocation
  * cache, or freed straight away, if cache is large enough.
  */
-void cl_env_put(struct lu_env *env, int *refcheck)
+void cl_env_put(struct lu_env *env, u16 *refcheck)
 {
 	struct cl_env *cle;
 
@@ -1016,7 +1017,7 @@ int cl_global_init(void)
 {
 	int result;
 
-	cl_envs = kzalloc(sizeof(*cl_envs) * num_possible_cpus(), GFP_KERNEL);
+	cl_envs = kcalloc(num_possible_cpus(), sizeof(*cl_envs), GFP_KERNEL);
 	if (!cl_envs) {
 		result = -ENOMEM;
 		goto out;

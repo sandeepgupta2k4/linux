@@ -207,7 +207,6 @@ static int lmp91000_read_raw(struct iio_dev *indio_dev,
 }
 
 static const struct iio_info lmp91000_info = {
-	.driver_module = THIS_MODULE,
 	.read_raw = lmp91000_read_raw,
 };
 
@@ -283,7 +282,6 @@ static int lmp91000_buffer_cb(const void *val, void *private)
 }
 
 static const struct iio_trigger_ops lmp91000_trigger_ops = {
-	.owner = THIS_MODULE,
 };
 
 
@@ -325,6 +323,7 @@ static int lmp91000_probe(struct i2c_client *client,
 	indio_dev->channels = lmp91000_channels;
 	indio_dev->num_channels = ARRAY_SIZE(lmp91000_channels);
 	indio_dev->name = LMP91000_DRV_NAME;
+	indio_dev->dev.parent = &client->dev;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	i2c_set_clientdata(client, indio_dev);
 

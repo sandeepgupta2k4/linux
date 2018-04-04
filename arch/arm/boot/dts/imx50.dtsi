@@ -12,6 +12,7 @@
  */
 
 #include "imx50-pinfunc.h"
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/clock/imx5-clock.h>
 
 / {
@@ -51,7 +52,7 @@
 		};
 	};
 
-	tzic: tz-interrupt-controller@0fffc000 {
+	tzic: tz-interrupt-controller@fffc000 {
 		compatible = "fsl,imx50-tzic", "fsl,imx53-tzic", "fsl,tzic";
 		interrupt-controller;
 		#interrupt-cells = <1>;
@@ -109,7 +110,7 @@
 				ranges;
 
 				esdhc1: esdhc@50004000 {
-					compatible = "fsl,imx50-esdhc";
+					compatible = "fsl,imx50-esdhc", "fsl,imx53-esdhc";
 					reg = <0x50004000 0x4000>;
 					interrupts = <1>;
 					clocks = <&clks IMX5_CLK_ESDHC1_IPG_GATE>,
@@ -121,7 +122,7 @@
 				};
 
 				esdhc2: esdhc@50008000 {
-					compatible = "fsl,imx50-esdhc";
+					compatible = "fsl,imx50-esdhc", "fsl,imx53-esdhc";
 					reg = <0x50008000 0x4000>;
 					interrupts = <2>;
 					clocks = <&clks IMX5_CLK_ESDHC2_IPG_GATE>,
@@ -170,7 +171,7 @@
 				};
 
 				esdhc3: esdhc@50020000 {
-					compatible = "fsl,imx50-esdhc";
+					compatible = "fsl,imx50-esdhc", "fsl,imx53-esdhc";
 					reg = <0x50020000 0x4000>;
 					interrupts = <3>;
 					clocks = <&clks IMX5_CLK_ESDHC3_IPG_GATE>,
@@ -182,7 +183,7 @@
 				};
 
 				esdhc4: esdhc@50024000 {
-					compatible = "fsl,imx50-esdhc";
+					compatible = "fsl,imx50-esdhc", "fsl,imx53-esdhc";
 					reg = <0x50024000 0x4000>;
 					interrupts = <4>;
 					clocks = <&clks IMX5_CLK_ESDHC4_IPG_GATE>,
@@ -442,6 +443,7 @@
 				clocks = <&clks IMX5_CLK_SDMA_GATE>,
 					 <&clks IMX5_CLK_SDMA_GATE>;
 				clock-names = "ipg", "ahb";
+				#dma-cells = <3>;
 				fsl,sdma-ram-script-name = "imx/sdma/sdma-imx50.bin";
 			};
 

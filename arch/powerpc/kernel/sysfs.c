@@ -485,6 +485,7 @@ SYSFS_PMCSETUP(mmcra, SPRN_MMCRA);
 SYSFS_SPRSETUP(purr, SPRN_PURR);
 SYSFS_SPRSETUP(spurr, SPRN_SPURR);
 SYSFS_SPRSETUP(pir, SPRN_PIR);
+SYSFS_SPRSETUP(tscr, SPRN_TSCR);
 
 /*
   Lets only enable read for phyp resources and
@@ -495,6 +496,7 @@ static DEVICE_ATTR(mmcra, 0600, show_mmcra, store_mmcra);
 static DEVICE_ATTR(spurr, 0400, show_spurr, NULL);
 static DEVICE_ATTR(purr, 0400, show_purr, store_purr);
 static DEVICE_ATTR(pir, 0400, show_pir, NULL);
+static DEVICE_ATTR(tscr, 0600, show_tscr, store_tscr);
 
 /*
  * This is the system wide DSCR register default value. Any
@@ -589,6 +591,17 @@ static void sysfs_create_dscr_default(void)
 	int err = 0;
 	if (cpu_has_feature(CPU_FTR_DSCR))
 		err = device_create_file(cpu_subsys.dev_root, &dev_attr_dscr_default);
+}
+
+void __init record_spr_defaults(void)
+{
+	int cpu;
+
+	if (cpu_has_feature(CPU_FTR_DSCR)) {
+		dscr_default = mfspr(SPRN_DSCR);
+		for (cpu = 0; cpu < nr_cpu_ids; cpu++)
+			paca[cpu].dscr_default = dscr_default;
+	}
 }
 #endif /* CONFIG_PPC64 */
 
@@ -710,6 +723,10 @@ static int register_cpu_online(unsigned int cpu)
 	struct device_attribute *attrs, *pmc_attrs;
 	int i, nattrs;
 
+	/* For cpus present at boot a reference was already grabbed in register_cpu() */
+	if (!s->of_node)
+		s->of_node = of_get_cpu_node(cpu, NULL);
+
 #ifdef CONFIG_PPC64
 	if (cpu_has_feature(CPU_FTR_SMT))
 		device_create_file(s, &dev_attr_smt_snooze_delay);
@@ -770,6 +787,10 @@ static int register_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
 		device_create_file(s, &dev_attr_pir);
+
+	if (cpu_has_feature(CPU_FTR_ARCH_206) &&
+		!firmware_has_feature(FW_FEATURE_LPAR))
+		device_create_file(s, &dev_attr_tscr);
 #endif /* CONFIG_PPC64 */
 
 #ifdef CONFIG_PPC_FSL_BOOK3E
@@ -785,9 +806,9 @@ static int register_cpu_online(unsigned int cpu)
 	return 0;
 }
 
+#ifdef CONFIG_HOTPLUG_CPU
 static int unregister_cpu_online(unsigned int cpu)
 {
-#ifdef CONFIG_HOTPLUG_CPU
 	struct cpu *c = &per_cpu(cpu_devices, cpu);
 	struct device *s = &c->dev;
 	struct device_attribute *attrs, *pmc_attrs;
@@ -852,6 +873,10 @@ static int unregister_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
 		device_remove_file(s, &dev_attr_pir);
+
+	if (cpu_has_feature(CPU_FTR_ARCH_206) &&
+		!firmware_has_feature(FW_FEATURE_LPAR))
+		device_remove_file(s, &dev_attr_tscr);
 #endif /* CONFIG_PPC64 */
 
 #ifdef CONFIG_PPC_FSL_BOOK3E
@@ -864,9 +889,13 @@ static int unregister_cpu_online(unsigned int cpu)
 	}
 #endif
 	cacheinfo_cpu_offline(cpu);
-#endif /* CONFIG_HOTPLUG_CPU */
+	of_node_put(s->of_node);
+	s->of_node = NULL;
 	return 0;
 }
+#else /* !CONFIG_HOTPLUG_CPU */
+#define unregister_cpu_online NULL
+#endif
 
 #ifdef CONFIG_ARCH_CPU_PROBE_RELEASE
 ssize_t arch_cpu_probe(const char *buf, size_t count)

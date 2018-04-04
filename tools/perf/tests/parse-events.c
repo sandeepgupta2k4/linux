@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "parse-events.h"
 #include "evsel.h"
 #include "evlist.h"
@@ -12,7 +13,6 @@
 #include <unistd.h>
 #include <linux/kernel.h>
 #include <linux/hw_breakpoint.h>
-#include <api/fs/fs.h>
 #include <api/fs/tracing_path.h>
 
 #define PERF_TP_SAMPLE_TYPE (PERF_SAMPLE_RAW | PERF_SAMPLE_TIME | \
@@ -1810,18 +1810,7 @@ static int test_pmu_events(void)
 	return ret;
 }
 
-static void debug_warn(const char *warn, va_list params)
-{
-	char msg[1024];
-
-	if (verbose <= 0)
-		return;
-
-	vsnprintf(msg, sizeof(msg), warn, params);
-	fprintf(stderr, " Warning: %s\n", msg);
-}
-
-int test__parse_events(int subtest __maybe_unused)
+int test__parse_events(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret1, ret2 = 0;
 
@@ -1831,8 +1820,6 @@ do {							\
 	if (!ret2)					\
 		ret2 = ret1;				\
 } while (0)
-
-	set_warning_routine(debug_warn);
 
 	TEST_EVENTS(test__events);
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /* thread_info.h: PowerPC low-level thread information
  * adapted from the i386 version by Paul Mackerras
  *
@@ -10,15 +11,7 @@
 
 #ifdef __KERNEL__
 
-/* We have 8k stacks on ppc32 and 16k on ppc64 */
-
-#if defined(CONFIG_PPC64)
-#define THREAD_SHIFT		14
-#elif defined(CONFIG_PPC_256K_PAGES)
-#define THREAD_SHIFT		15
-#else
-#define THREAD_SHIFT		13
-#endif
+#define THREAD_SHIFT		CONFIG_THREAD_SHIFT
 
 #define THREAD_SIZE		(1 << THREAD_SHIFT)
 
@@ -64,9 +57,6 @@ struct thread_info {
 	.preempt_count = INIT_PREEMPT_COUNT,	\
 	.flags =	0,			\
 }
-
-#define init_thread_info	(init_thread_union.thread_info)
-#define init_stack		(init_thread_union.stack)
 
 #define THREAD_SIZE_ORDER	(THREAD_SHIFT - PAGE_SHIFT)
 

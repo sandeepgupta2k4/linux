@@ -64,11 +64,6 @@ static VCHIQ_STATUS_T
 vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
 	unsigned int size, VCHIQ_BULK_DIR_T dir);
 
-/****************************************************************************
-*
-*   vchiq_initialise
-*
-***************************************************************************/
 #define VCHIQ_INIT_RETRIES 10
 VCHIQ_STATUS_T vchiq_initialise(VCHIQ_INSTANCE_T *instance_out)
 {
@@ -80,7 +75,9 @@ VCHIQ_STATUS_T vchiq_initialise(VCHIQ_INSTANCE_T *instance_out)
 	vchiq_log_trace(vchiq_core_log_level, "%s called", __func__);
 
 	/* VideoCore may not be ready due to boot up timing.
-	   It may never be ready if kernel and firmware are mismatched, so don't block forever. */
+	 * It may never be ready if kernel and firmware are mismatched,so don't
+	 * block forever.
+	 */
 	for (i = 0; i < VCHIQ_INIT_RETRIES; i++) {
 		state = vchiq_get_state();
 		if (state)
@@ -93,7 +90,8 @@ VCHIQ_STATUS_T vchiq_initialise(VCHIQ_INSTANCE_T *instance_out)
 		goto failed;
 	} else if (i > 0) {
 		vchiq_log_warning(vchiq_core_log_level,
-			"%s: videocore initialized after %d retries\n", __func__, i);
+			"%s: videocore initialized after %d retries\n",
+			__func__, i);
 	}
 
 	instance = kzalloc(sizeof(*instance), GFP_KERNEL);
@@ -120,12 +118,6 @@ failed:
 }
 EXPORT_SYMBOL(vchiq_initialise);
 
-/****************************************************************************
-*
-*   vchiq_shutdown
-*
-***************************************************************************/
-
 VCHIQ_STATUS_T vchiq_shutdown(VCHIQ_INSTANCE_T instance)
 {
 	VCHIQ_STATUS_T status;
@@ -147,9 +139,11 @@ VCHIQ_STATUS_T vchiq_shutdown(VCHIQ_INSTANCE_T instance)
 
 	if (status == VCHIQ_SUCCESS) {
 		struct list_head *pos, *next;
+
 		list_for_each_safe(pos, next,
 				&instance->bulk_waiter_list) {
 			struct bulk_waiter_node *waiter;
+
 			waiter = list_entry(pos,
 					struct bulk_waiter_node,
 					list);
@@ -166,22 +160,10 @@ VCHIQ_STATUS_T vchiq_shutdown(VCHIQ_INSTANCE_T instance)
 }
 EXPORT_SYMBOL(vchiq_shutdown);
 
-/****************************************************************************
-*
-*   vchiq_is_connected
-*
-***************************************************************************/
-
 static int vchiq_is_connected(VCHIQ_INSTANCE_T instance)
 {
 	return instance->connected;
 }
-
-/****************************************************************************
-*
-*   vchiq_connect
-*
-***************************************************************************/
 
 VCHIQ_STATUS_T vchiq_connect(VCHIQ_INSTANCE_T instance)
 {
@@ -211,12 +193,6 @@ failed:
 	return status;
 }
 EXPORT_SYMBOL(vchiq_connect);
-
-/****************************************************************************
-*
-*   vchiq_add_service
-*
-***************************************************************************/
 
 VCHIQ_STATUS_T vchiq_add_service(
 	VCHIQ_INSTANCE_T              instance,
@@ -256,12 +232,6 @@ VCHIQ_STATUS_T vchiq_add_service(
 	return status;
 }
 EXPORT_SYMBOL(vchiq_add_service);
-
-/****************************************************************************
-*
-*   vchiq_open_service
-*
-***************************************************************************/
 
 VCHIQ_STATUS_T vchiq_open_service(
 	VCHIQ_INSTANCE_T              instance,
@@ -406,13 +376,15 @@ vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
 
 	if (waiter) {
 		VCHIQ_BULK_T *bulk = waiter->bulk_waiter.bulk;
+
 		if (bulk) {
 			/* This thread has an outstanding bulk transfer. */
 			if ((bulk->data != data) ||
 				(bulk->size != size)) {
 				/* This is not a retry of the previous one.
-				** Cancel the signal when the transfer
-				** completes. */
+				 * Cancel the signal when the transfer
+				 * completes.
+				 */
 				spin_lock(&bulk_waiter_spinlock);
 				bulk->userdata = NULL;
 				spin_unlock(&bulk_waiter_spinlock);
@@ -435,9 +407,11 @@ vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
 	if ((status != VCHIQ_RETRY) || fatal_signal_pending(current) ||
 		!waiter->bulk_waiter.bulk) {
 		VCHIQ_BULK_T *bulk = waiter->bulk_waiter.bulk;
+
 		if (bulk) {
 			/* Cancel the signal when the transfer
-			 ** completes. */
+			 * completes.
+			 */
 			spin_lock(&bulk_waiter_spinlock);
 			bulk->userdata = NULL;
 			spin_unlock(&bulk_waiter_spinlock);

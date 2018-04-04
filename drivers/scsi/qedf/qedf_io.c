@@ -1,6 +1,6 @@
 /*
  *  QLogic FCoE Offload Driver
- *  Copyright (c) 2016 Cavium Inc.
+ *  Copyright (c) 2016-2017 Cavium Inc.
  *
  *  This software is available under the terms of the GNU General Public License
  *  (GPL) Version 2, available from the file COPYING in the main directory of
@@ -579,7 +579,7 @@ static void qedf_build_fcp_cmnd(struct qedf_ioreq *io_req,
 }
 
 static void  qedf_init_task(struct qedf_rport *fcport, struct fc_lport *lport,
-	struct qedf_ioreq *io_req, struct fcoe_task_context *task_ctx,
+	struct qedf_ioreq *io_req, struct e4_fcoe_task_context *task_ctx,
 	struct fcoe_wqe *sqe)
 {
 	enum fcoe_task_type task_type;
@@ -597,7 +597,7 @@ static void  qedf_init_task(struct qedf_rport *fcport, struct fc_lport *lport,
 
 	/* Note init_initiator_rw_fcoe_task memsets the task context */
 	io_req->task = task_ctx;
-	memset(task_ctx, 0, sizeof(struct fcoe_task_context));
+	memset(task_ctx, 0, sizeof(struct e4_fcoe_task_context));
 	memset(io_req->task_params, 0, sizeof(struct fcoe_task_params));
 	memset(io_req->sgl_task_params, 0, sizeof(struct scsi_sgl_task_params));
 
@@ -673,7 +673,7 @@ static void  qedf_init_task(struct qedf_rport *fcport, struct fc_lport *lport,
 }
 
 void qedf_init_mp_task(struct qedf_ioreq *io_req,
-	struct fcoe_task_context *task_ctx, struct fcoe_wqe *sqe)
+	struct e4_fcoe_task_context *task_ctx, struct fcoe_wqe *sqe)
 {
 	struct qedf_mp_req *mp_req = &(io_req->mp_req);
 	struct qedf_rport *fcport = io_req->fcport;
@@ -691,7 +691,7 @@ void qedf_init_mp_task(struct qedf_ioreq *io_req,
 
 	memset(&tx_sgl_task_params, 0, sizeof(struct scsi_sgl_task_params));
 	memset(&rx_sgl_task_params, 0, sizeof(struct scsi_sgl_task_params));
-	memset(task_ctx, 0, sizeof(struct fcoe_task_context));
+	memset(task_ctx, 0, sizeof(struct e4_fcoe_task_context));
 	memset(&task_fc_hdr, 0, sizeof(struct fcoe_tx_mid_path_params));
 
 	/* Setup the task from io_req for easy reference */
@@ -844,7 +844,7 @@ int qedf_post_io_req(struct qedf_rport *fcport, struct qedf_ioreq *io_req)
 	struct Scsi_Host *host = sc_cmd->device->host;
 	struct fc_lport *lport = shost_priv(host);
 	struct qedf_ctx *qedf = lport_priv(lport);
-	struct fcoe_task_context *task_ctx;
+	struct e4_fcoe_task_context *task_ctx;
 	u16 xid;
 	enum fcoe_task_type req_type = 0;
 	struct fcoe_wqe *sqe;
@@ -1041,10 +1041,13 @@ static void qedf_parse_fcp_rsp(struct qedf_ioreq *io_req,
 		fcp_sns_len = SCSI_SENSE_BUFFERSIZE;
 	}
 
-	memset(sc_cmd->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
-	if (fcp_sns_len)
-		memcpy(sc_cmd->sense_buffer, sense_data,
-		    fcp_sns_len);
+	/* The sense buffer can be NULL for TMF commands */
+	if (sc_cmd->sense_buffer) {
+		memset(sc_cmd->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
+		if (fcp_sns_len)
+			memcpy(sc_cmd->sense_buffer, sense_data,
+			    fcp_sns_len);
+	}
 }
 
 static void qedf_unmap_sg_list(struct qedf_ctx *qedf, struct qedf_ioreq *io_req)
@@ -1062,7 +1065,7 @@ void qedf_scsi_completion(struct qedf_ctx *qedf, struct fcoe_cqe *cqe,
 	struct qedf_ioreq *io_req)
 {
 	u16 xid, rval;
-	struct fcoe_task_context *task_ctx;
+	struct e4_fcoe_task_context *task_ctx;
 	struct scsi_cmnd *sc_cmd;
 	struct fcoe_cqe_rsp_info *fcp_rsp;
 	struct qedf_rport *fcport;
@@ -1476,8 +1479,8 @@ int qedf_initiate_abts(struct qedf_ioreq *io_req, bool return_scsi_cmd_on_abts)
 {
 	struct fc_lport *lport;
 	struct qedf_rport *fcport = io_req->fcport;
-	struct fc_rport_priv *rdata = fcport->rdata;
-	struct qedf_ctx *qedf = fcport->qedf;
+	struct fc_rport_priv *rdata;
+	struct qedf_ctx *qedf;
 	u16 xid;
 	u32 r_a_tov = 0;
 	int rc = 0;
@@ -1485,14 +1488,17 @@ int qedf_initiate_abts(struct qedf_ioreq *io_req, bool return_scsi_cmd_on_abts)
 	struct fcoe_wqe *sqe;
 	u16 sqe_idx;
 
-	r_a_tov = rdata->r_a_tov;
-	lport = qedf->lport;
-
+	/* Sanity check qedf_rport before dereferencing any pointers */
 	if (!test_bit(QEDF_RPORT_SESSION_READY, &fcport->flags)) {
-		QEDF_ERR(&(qedf->dbg_ctx), "tgt not offloaded\n");
+		QEDF_ERR(NULL, "tgt not offloaded\n");
 		rc = 1;
 		goto abts_err;
 	}
+
+	rdata = fcport->rdata;
+	r_a_tov = rdata->r_a_tov;
+	qedf = fcport->qedf;
+	lport = qedf->lport;
 
 	if (lport->state != LPORT_ST_READY || !(lport->link_up)) {
 		QEDF_ERR(&(qedf->dbg_ctx), "link is not ready\n");
@@ -1716,7 +1722,7 @@ int qedf_initiate_cleanup(struct qedf_ioreq *io_req,
 	struct qedf_rport *fcport;
 	struct qedf_ctx *qedf;
 	uint16_t xid;
-	struct fcoe_task_context *task;
+	struct e4_fcoe_task_context *task;
 	int tmo = 0;
 	int rc = SUCCESS;
 	unsigned long flags;
@@ -1726,6 +1732,13 @@ int qedf_initiate_cleanup(struct qedf_ioreq *io_req,
 	fcport = io_req->fcport;
 	if (!fcport) {
 		QEDF_ERR(NULL, "fcport is NULL.\n");
+		return SUCCESS;
+	}
+
+	/* Sanity check qedf_rport before dereferencing any pointers */
+	if (!test_bit(QEDF_RPORT_SESSION_READY, &fcport->flags)) {
+		QEDF_ERR(NULL, "tgt not offloaded\n");
+		rc = 1;
 		return SUCCESS;
 	}
 
@@ -1822,7 +1835,7 @@ static int qedf_execute_tmf(struct qedf_rport *fcport, struct scsi_cmnd *sc_cmd,
 	uint8_t tm_flags)
 {
 	struct qedf_ioreq *io_req;
-	struct fcoe_task_context *task;
+	struct e4_fcoe_task_context *task;
 	struct qedf_ctx *qedf = fcport->qedf;
 	struct fc_lport *lport = qedf->lport;
 	int rc = 0;
@@ -1837,7 +1850,7 @@ static int qedf_execute_tmf(struct qedf_rport *fcport, struct scsi_cmnd *sc_cmd,
 		return FAILED;
 	}
 
-	if (!(test_bit(QEDF_RPORT_SESSION_READY, &fcport->flags))) {
+	if (!test_bit(QEDF_RPORT_SESSION_READY, &fcport->flags)) {
 		QEDF_ERR(&(qedf->dbg_ctx), "fcport not offloaded\n");
 		rc = FAILED;
 		return FAILED;
@@ -1992,17 +2005,18 @@ void qedf_process_unsol_compl(struct qedf_ctx *qedf, uint16_t que_idx,
 	struct qedf_io_work *io_work;
 	u32 bdq_idx;
 	void *bdq_addr;
+	struct scsi_bd *p_bd_info;
 
+	p_bd_info = &cqe->cqe_info.unsolic_info.bd_info;
 	QEDF_INFO(&(qedf->dbg_ctx), QEDF_LOG_UNSOL,
-	    "address.hi=%x address.lo=%x opaque_data.hi=%x "
-	    "opaque_data.lo=%x bdq_prod_idx=%u len=%u.\n",
-	    le32_to_cpu(cqe->cqe_info.unsolic_info.bd_info.address.hi),
-	    le32_to_cpu(cqe->cqe_info.unsolic_info.bd_info.address.lo),
-	    le32_to_cpu(cqe->cqe_info.unsolic_info.bd_info.opaque.hi),
-	    le32_to_cpu(cqe->cqe_info.unsolic_info.bd_info.opaque.lo),
-	    qedf->bdq_prod_idx, pktlen);
+		  "address.hi=%x, address.lo=%x, opaque_data.hi=%x, opaque_data.lo=%x, bdq_prod_idx=%u, len=%u\n",
+		  le32_to_cpu(p_bd_info->address.hi),
+		  le32_to_cpu(p_bd_info->address.lo),
+		  le32_to_cpu(p_bd_info->opaque.fcoe_opaque.hi),
+		  le32_to_cpu(p_bd_info->opaque.fcoe_opaque.lo),
+		  qedf->bdq_prod_idx, pktlen);
 
-	bdq_idx = le32_to_cpu(cqe->cqe_info.unsolic_info.bd_info.opaque.lo);
+	bdq_idx = le32_to_cpu(p_bd_info->opaque.fcoe_opaque.lo);
 	if (bdq_idx >= QEDF_BDQ_SIZE) {
 		QEDF_ERR(&(qedf->dbg_ctx), "bdq_idx is out of range %d.\n",
 		    bdq_idx);

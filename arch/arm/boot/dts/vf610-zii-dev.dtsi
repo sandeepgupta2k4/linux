@@ -96,6 +96,10 @@
 	status = "okay";
 };
 
+&edma1 {
+	status = "okay";
+};
+
 &esdhc1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_esdhc1>;
@@ -293,6 +297,18 @@
 			VF610_PAD_PTB20__GPIO_42	0x33e1
 			VF610_PAD_PTB19__GPIO_41	0x33e2
 			VF610_PAD_PTB18__GPIO_40	0x33e2
+		>;
+	};
+
+	pinctrl_gpio_switch0: pinctrl-gpio-switch0 {
+		fsl,pins = <
+			VF610_PAD_PTB5__GPIO_27		0x219d
+		>;
+	};
+
+	pinctrl_gpio_switch1: pinctrl-gpio-switch1 {
+		fsl,pins = <
+			VF610_PAD_PTB4__GPIO_26		0x219d
 		>;
 	};
 

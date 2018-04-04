@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Functions related to sysfs handling
  */
@@ -13,6 +14,7 @@
 
 #include "blk.h"
 #include "blk-mq.h"
+#include "blk-mq-debugfs.h"
 #include "blk-wbt.h"
 
 struct queue_sysfs_entry {
@@ -448,12 +450,9 @@ static ssize_t queue_wb_lat_store(struct request_queue *q, const char *page,
 		ret = wbt_init(q);
 		if (ret)
 			return ret;
-
-		rwb = q->rq_wb;
-		if (!rwb)
-			return -EINVAL;
 	}
 
+	rwb = q->rq_wb;
 	if (val == -1)
 		rwb->min_lat_nsec = wbt_default_latency_nsec(q);
 	else if (val >= 0)
@@ -776,24 +775,25 @@ static void blk_free_queue_rcu(struct rcu_head *rcu_head)
 }
 
 /**
- * blk_release_queue: - release a &struct request_queue when it is no longer needed
- * @kobj:    the kobj belonging to the request queue to be released
+ * __blk_release_queue - release a request queue when it is no longer needed
+ * @work: pointer to the release_work member of the request queue to be released
  *
  * Description:
- *     blk_release_queue is the pair to blk_init_queue() or
- *     blk_queue_make_request().  It should be called when a request queue is
- *     being released; typically when a block device is being de-registered.
- *     Currently, its primary task it to free all the &struct request
- *     structures that were allocated to the queue and the queue itself.
+ *     blk_release_queue is the counterpart of blk_init_queue(). It should be
+ *     called when a request queue is being released; typically when a block
+ *     device is being de-registered. Its primary task it to free the queue
+ *     itself.
  *
- * Note:
+ * Notes:
  *     The low level driver must have finished any outstanding requests first
  *     via blk_cleanup_queue().
- **/
-static void blk_release_queue(struct kobject *kobj)
+ *
+ *     Although blk_release_queue() may be called with preemption disabled,
+ *     __blk_release_queue() may sleep.
+ */
+static void __blk_release_queue(struct work_struct *work)
 {
-	struct request_queue *q =
-		container_of(kobj, struct request_queue, kobj);
+	struct request_queue *q = container_of(work, typeof(*q), release_work);
 
 	if (test_bit(QUEUE_FLAG_POLL_STATS, &q->queue_flags))
 		blk_stat_remove_callback(q, q->poll_cb);
@@ -808,7 +808,7 @@ static void blk_release_queue(struct kobject *kobj)
 
 	blk_free_queue_stats(q->stats);
 
-	blk_exit_rl(&q->root_rl);
+	blk_exit_rl(q, &q->root_rl);
 
 	if (q->queue_tags)
 		__blk_queue_free_tags(q);
@@ -833,6 +833,15 @@ static void blk_release_queue(struct kobject *kobj)
 	call_rcu(&q->rcu_head, blk_free_queue_rcu);
 }
 
+static void blk_release_queue(struct kobject *kobj)
+{
+	struct request_queue *q =
+		container_of(kobj, struct request_queue, kobj);
+
+	INIT_WORK(&q->release_work, __blk_release_queue);
+	schedule_work(&q->release_work);
+}
+
 static const struct sysfs_ops queue_sysfs_ops = {
 	.show	= queue_attr_show,
 	.store	= queue_attr_store,
@@ -844,6 +853,10 @@ struct kobj_type blk_queue_ktype = {
 	.release	= blk_release_queue,
 };
 
+/**
+ * blk_register_queue - register a block layer queue with sysfs
+ * @disk: Disk of which the request queue should be registered with sysfs.
+ */
 int blk_register_queue(struct gendisk *disk)
 {
 	int ret;
@@ -886,8 +899,10 @@ int blk_register_queue(struct gendisk *disk)
 		goto unlock;
 	}
 
-	if (q->mq_ops)
+	if (q->mq_ops) {
 		__blk_mq_register_dev(dev, q);
+		blk_mq_debugfs_register(q);
+	}
 
 	kobject_uevent(&q->kobj, KOBJ_ADD);
 
@@ -898,11 +913,12 @@ int blk_register_queue(struct gendisk *disk)
 	if (q->request_fn || (q->mq_ops && q->elevator)) {
 		ret = elv_register_queue(q);
 		if (ret) {
+			mutex_unlock(&q->sysfs_lock);
 			kobject_uevent(&q->kobj, KOBJ_REMOVE);
 			kobject_del(&q->kobj);
 			blk_trace_remove_sysfs(dev);
 			kobject_put(&dev->kobj);
-			goto unlock;
+			return ret;
 		}
 	}
 	ret = 0;
@@ -910,7 +926,15 @@ unlock:
 	mutex_unlock(&q->sysfs_lock);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(blk_register_queue);
 
+/**
+ * blk_unregister_queue - counterpart of blk_register_queue()
+ * @disk: Disk of which the request queue should be unregistered from sysfs.
+ *
+ * Note: the caller is responsible for guaranteeing that this function is called
+ * after blk_register_queue() has finished.
+ */
 void blk_unregister_queue(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
@@ -918,19 +942,39 @@ void blk_unregister_queue(struct gendisk *disk)
 	if (WARN_ON(!q))
 		return;
 
-	queue_flag_clear_unlocked(QUEUE_FLAG_REGISTERED, q);
+	/* Return early if disk->queue was never registered. */
+	if (!test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags))
+		return;
 
-	wbt_exit(q);
+	/*
+	 * Since sysfs_remove_dir() prevents adding new directory entries
+	 * before removal of existing entries starts, protect against
+	 * concurrent elv_iosched_store() calls.
+	 */
+	mutex_lock(&q->sysfs_lock);
 
+	spin_lock_irq(q->queue_lock);
+	queue_flag_clear(QUEUE_FLAG_REGISTERED, q);
+	spin_unlock_irq(q->queue_lock);
 
+	/*
+	 * Remove the sysfs attributes before unregistering the queue data
+	 * structures that can be modified through sysfs.
+	 */
 	if (q->mq_ops)
 		blk_mq_unregister_dev(disk_to_dev(disk), q);
-
-	if (q->request_fn || (q->mq_ops && q->elevator))
-		elv_unregister_queue(q);
+	mutex_unlock(&q->sysfs_lock);
 
 	kobject_uevent(&q->kobj, KOBJ_REMOVE);
 	kobject_del(&q->kobj);
 	blk_trace_remove_sysfs(disk_to_dev(disk));
+
+	wbt_exit(q);
+
+	mutex_lock(&q->sysfs_lock);
+	if (q->request_fn || (q->mq_ops && q->elevator))
+		elv_unregister_queue(q);
+	mutex_unlock(&q->sysfs_lock);
+
 	kobject_put(&disk_to_dev(disk)->kobj);
 }

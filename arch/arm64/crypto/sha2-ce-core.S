@@ -53,6 +53,7 @@
 	/*
 	 * The SHA-256 round constants
 	 */
+	.section	".rodata", "a"
 	.align		4
 .Lsha2_rcon:
 	.word		0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5
@@ -76,9 +77,10 @@
 	 * void sha2_ce_transform(struct sha256_ce_state *sst, u8 const *src,
 	 *			  int blocks)
 	 */
+	.text
 ENTRY(sha2_ce_transform)
 	/* load round constants */
-	adr		x8, .Lsha2_rcon
+	adr_l		x8, .Lsha2_rcon
 	ld1		{ v0.4s- v3.4s}, [x8], #64
 	ld1		{ v4.4s- v7.4s}, [x8], #64
 	ld1		{ v8.4s-v11.4s}, [x8], #64
@@ -88,7 +90,8 @@ ENTRY(sha2_ce_transform)
 	ld1		{dgav.4s, dgbv.4s}, [x0]
 
 	/* load sha256_ce_state::finalize */
-	ldr		w4, [x0, #:lo12:sha256_ce_offsetof_finalize]
+	ldr_l		w4, sha256_ce_offsetof_finalize, x4
+	ldr		w4, [x0, x4]
 
 	/* load input */
 0:	ld1		{v16.4s-v19.4s}, [x1], #64
@@ -136,7 +139,8 @@ CPU_LE(	rev32		v19.16b, v19.16b	)
 	 * the padding is handled by the C code in that case.
 	 */
 	cbz		x4, 3f
-	ldr		x4, [x0, #:lo12:sha256_ce_offsetof_count]
+	ldr_l		w4, sha256_ce_offsetof_count, x4
+	ldr		x4, [x0, x4]
 	movi		v17.2d, #0
 	mov		x8, #0x80000000
 	movi		v18.2d, #0

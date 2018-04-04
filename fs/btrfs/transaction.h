@@ -18,6 +18,8 @@
 
 #ifndef __BTRFS_TRANSACTION__
 #define __BTRFS_TRANSACTION__
+
+#include <linux/refcount.h>
 #include "btrfs_inode.h"
 #include "delayed-ref.h"
 #include "ctree.h"
@@ -49,13 +51,14 @@ struct btrfs_transaction {
 	 * transaction can end
 	 */
 	atomic_t num_writers;
-	atomic_t use_count;
+	refcount_t use_count;
 	atomic_t pending_ordered;
 
 	unsigned long flags;
 
 	/* Be protected by fs_info->trans_lock when we want to change it. */
 	enum btrfs_trans_state state;
+	int aborted;
 	struct list_head list;
 	struct extent_io_tree dirty_pages;
 	unsigned long start_time;
@@ -68,7 +71,6 @@ struct btrfs_transaction {
 	struct list_head dirty_bgs;
 	struct list_head io_bgs;
 	struct list_head dropped_roots;
-	u64 num_dirty_bgs;
 
 	/*
 	 * we need to make sure block group deletion doesn't race with
@@ -77,11 +79,11 @@ struct btrfs_transaction {
 	 */
 	struct mutex cache_write_mutex;
 	spinlock_t dirty_bgs_lock;
+	unsigned int num_dirty_bgs;
 	/* Protected by spin lock fs_info->unused_bgs_lock. */
 	struct list_head deleted_bgs;
 	spinlock_t dropped_roots_lock;
 	struct btrfs_delayed_ref_root delayed_refs;
-	int aborted;
 	struct btrfs_fs_info *fs_info;
 };
 
@@ -109,24 +111,21 @@ struct btrfs_trans_handle {
 	u64 transid;
 	u64 bytes_reserved;
 	u64 chunk_bytes_reserved;
-	unsigned long use_count;
-	unsigned long blocks_reserved;
 	unsigned long delayed_ref_updates;
 	struct btrfs_transaction *transaction;
 	struct btrfs_block_rsv *block_rsv;
 	struct btrfs_block_rsv *orig_rsv;
+	refcount_t use_count;
+	unsigned int type;
 	short aborted;
-	short adding_csums;
+	bool adding_csums;
 	bool allocating_chunk;
 	bool can_flush_pending_bgs;
 	bool reloc_reserved;
 	bool sync;
 	bool dirty;
-	unsigned int type;
 	struct btrfs_root *root;
 	struct btrfs_fs_info *fs_info;
-	struct seq_list delayed_ref_elem;
-	struct list_head qgroup_ref_list;
 	struct list_head new_bgs;
 };
 

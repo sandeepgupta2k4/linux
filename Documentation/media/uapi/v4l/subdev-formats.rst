@@ -16,10 +16,14 @@ Media Bus Formats
 
     * - __u32
       - ``width``
-      - Image width, in pixels.
+      - Image width in pixels.
     * - __u32
       - ``height``
-      - Image height, in pixels.
+      - Image height in pixels. If ``field`` is one of ``V4L2_FIELD_TOP``,
+	``V4L2_FIELD_BOTTOM`` or ``V4L2_FIELD_ALTERNATE`` then height
+	refers to the number of lines in the field, otherwise it refers to
+	the number of lines in the frame (which is twice the field height
+	for interlaced formats).
     * - __u32
       - ``code``
       - Format code, from enum
@@ -1586,7 +1590,7 @@ JEIDA defined bit mapping will be named
 
 .. raw:: latex
 
-    \begin{adjustbox}{width=\columnwidth}
+    \tiny
 
 .. _v4l2-mbus-pixelcode-rgb-lvds:
 
@@ -1784,7 +1788,7 @@ JEIDA defined bit mapping will be named
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 
 Bayer Formats
@@ -1890,10 +1894,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -1911,10 +1915,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -1932,10 +1936,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -1953,10 +1957,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -1974,10 +1978,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -1995,10 +1999,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -2016,10 +2020,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -2037,10 +2041,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -2058,10 +2062,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -2079,10 +2083,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -2100,10 +2104,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -2121,10 +2125,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -2142,10 +2146,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - 0
       - 0
       - 0
@@ -2161,10 +2165,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -2182,10 +2186,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -2201,10 +2205,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - 0
       - 0
       - 0
@@ -2222,10 +2226,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`9`
       - b\ :sub:`8`
       - b\ :sub:`7`
@@ -2241,10 +2245,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`1`
       - b\ :sub:`0`
       - 0
@@ -2262,10 +2266,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`1`
       - b\ :sub:`0`
       - 0
@@ -2281,10 +2285,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`9`
       - b\ :sub:`8`
       - b\ :sub:`7`
@@ -2300,10 +2304,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`9`
       - b\ :sub:`8`
       - b\ :sub:`7`
@@ -2321,10 +2325,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`9`
       - g\ :sub:`8`
       - g\ :sub:`7`
@@ -2342,10 +2346,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`9`
       - g\ :sub:`8`
       - g\ :sub:`7`
@@ -2363,10 +2367,10 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - r\ :sub:`9`
       - r\ :sub:`8`
       - r\ :sub:`7`
@@ -2382,10 +2386,10 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SBGGR12_1X12
       - 0x3008
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - b\ :sub:`11`
       - b\ :sub:`10`
       - b\ :sub:`9`
@@ -2403,10 +2407,10 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SGBRG12_1X12
       - 0x3010
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`11`
       - g\ :sub:`10`
       - g\ :sub:`9`
@@ -2424,10 +2428,10 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SGRBG12_1X12
       - 0x3011
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - g\ :sub:`11`
       - g\ :sub:`10`
       - g\ :sub:`9`
@@ -2445,10 +2449,10 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SRGGB12_1X12
       - 0x3012
       -
-      - -
-      - -
-      - -
-      - -
+      -
+      -
+      -
+      -
       - r\ :sub:`11`
       - r\ :sub:`10`
       - r\ :sub:`9`
@@ -2466,8 +2470,8 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SBGGR14_1X14
       - 0x3019
       -
-      - -
-      - -
+      -
+      -
       - b\ :sub:`13`
       - b\ :sub:`12`
       - b\ :sub:`11`
@@ -2487,8 +2491,8 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SGBRG14_1X14
       - 0x301a
       -
-      - -
-      - -
+      -
+      -
       - g\ :sub:`13`
       - g\ :sub:`12`
       - g\ :sub:`11`
@@ -2508,8 +2512,8 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SGRBG14_1X14
       - 0x301b
       -
-      - -
-      - -
+      -
+      -
       - g\ :sub:`13`
       - g\ :sub:`12`
       - g\ :sub:`11`
@@ -2529,8 +2533,8 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SRGGB14_1X14
       - 0x301c
       -
-      - -
-      - -
+      -
+      -
       - r\ :sub:`13`
       - r\ :sub:`12`
       - r\ :sub:`11`
@@ -7321,11 +7325,14 @@ following information.
 
 The following table lists existing HSV/HSL formats.
 
+
 .. raw:: latex
 
-    \newline\newline\begin{adjustbox}{width=\columnwidth}
+    \begingroup
+    \tiny
+    \setlength{\tabcolsep}{2pt}
 
-.. tabularcolumns:: |p{6.2cm}|p{1.6cm}|p{0.7cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|p{0.5cm}|
+.. tabularcolumns:: |p{3.0cm}|p{0.60cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|
 
 .. _v4l2-mbus-pixelcode-hsv:
 
@@ -7413,7 +7420,7 @@ The following table lists existing HSV/HSL formats.
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 
 JPEG Compressed Formats
@@ -7435,7 +7442,7 @@ The following table lists existing JPEG compressed formats.
 
 .. _v4l2-mbus-pixelcode-jpeg:
 
-.. tabularcolumns:: |p{5.6cm}|p{1.2cm}|p{10.7cm}|
+.. tabularcolumns:: |p{5.4cm}|p{1.4cm}|p{10.7cm}|
 
 .. flat-table:: JPEG Formats
     :header-rows:  1
@@ -7468,7 +7475,7 @@ formats.
 
 .. _v4l2-mbus-pixelcode-vendor-specific:
 
-.. tabularcolumns:: |p{6.6cm}|p{1.2cm}|p{9.7cm}|
+.. tabularcolumns:: |p{6.8cm}|p{1.4cm}|p{9.3cm}|
 
 .. flat-table:: Vendor and device specific formats
     :header-rows:  1

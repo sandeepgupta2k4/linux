@@ -53,6 +53,7 @@ struct ib_update_work {
 	struct work_struct work;
 	struct ib_device  *device;
 	u8                 port_num;
+	bool		   enforce_security;
 };
 
 union ib_gid zgid;
@@ -572,27 +573,24 @@ static int ib_cache_gid_find_by_filter(struct ib_device *ib_dev,
 		struct ib_gid_attr attr;
 
 		if (table->data_vec[i].props & GID_TABLE_ENTRY_INVALID)
-			goto next;
+			continue;
 
 		if (memcmp(gid, &table->data_vec[i].gid, sizeof(*gid)))
-			goto next;
+			continue;
 
 		memcpy(&attr, &table->data_vec[i].attr, sizeof(attr));
 
-		if (filter(gid, &attr, context))
+		if (filter(gid, &attr, context)) {
 			found = true;
-
-next:
-		if (found)
+			if (index)
+				*index = i;
 			break;
+		}
 	}
 	read_unlock_irqrestore(&table->rwlock, flags);
 
 	if (!found)
 		return -ENOENT;
-
-	if (index)
-		*index = i;
 	return 0;
 }
 
@@ -823,12 +821,7 @@ static int gid_table_setup_one(struct ib_device *ib_dev)
 	if (err)
 		return err;
 
-	err = roce_rescan_device(ib_dev);
-
-	if (err) {
-		gid_table_cleanup_one(ib_dev);
-		gid_table_release_one(ib_dev);
-	}
+	rdma_roce_rescan_device(ib_dev);
 
 	return err;
 }
@@ -882,7 +875,6 @@ int ib_find_gid_by_filter(struct ib_device *device,
 					   port_num, filter,
 					   context, index);
 }
-EXPORT_SYMBOL(ib_find_gid_by_filter);
 
 int ib_get_cached_pkey(struct ib_device *device,
 		       u8                port_num,
@@ -910,6 +902,26 @@ int ib_get_cached_pkey(struct ib_device *device,
 	return ret;
 }
 EXPORT_SYMBOL(ib_get_cached_pkey);
+
+int ib_get_cached_subnet_prefix(struct ib_device *device,
+				u8                port_num,
+				u64              *sn_pfx)
+{
+	unsigned long flags;
+	int p;
+
+	if (port_num < rdma_start_port(device) ||
+	    port_num > rdma_end_port(device))
+		return -EINVAL;
+
+	p = port_num - rdma_start_port(device);
+	read_lock_irqsave(&device->cache.lock, flags);
+	*sn_pfx = device->cache.ports[p].subnet_prefix;
+	read_unlock_irqrestore(&device->cache.lock, flags);
+
+	return 0;
+}
+EXPORT_SYMBOL(ib_get_cached_subnet_prefix);
 
 int ib_find_cached_pkey(struct ib_device *device,
 			u8                port_num,
@@ -1022,7 +1034,8 @@ int ib_get_cached_port_state(struct ib_device   *device,
 EXPORT_SYMBOL(ib_get_cached_port_state);
 
 static void ib_cache_update(struct ib_device *device,
-			    u8                port)
+			    u8                port,
+			    bool	      enforce_security)
 {
 	struct ib_port_attr       *tprops = NULL;
 	struct ib_pkey_cache      *pkey_cache = NULL, *old_pkey_cache;
@@ -1108,7 +1121,14 @@ static void ib_cache_update(struct ib_device *device,
 	device->cache.ports[port - rdma_start_port(device)].port_state =
 		tprops->state;
 
+	device->cache.ports[port - rdma_start_port(device)].subnet_prefix =
+							tprops->subnet_prefix;
 	write_unlock_irq(&device->cache.lock);
+
+	if (enforce_security)
+		ib_security_cache_change(device,
+					 port,
+					 tprops->subnet_prefix);
 
 	kfree(gid_cache);
 	kfree(old_pkey_cache);
@@ -1126,7 +1146,9 @@ static void ib_cache_task(struct work_struct *_work)
 	struct ib_update_work *work =
 		container_of(_work, struct ib_update_work, work);
 
-	ib_cache_update(work->device, work->port_num);
+	ib_cache_update(work->device,
+			work->port_num,
+			work->enforce_security);
 	kfree(work);
 }
 
@@ -1147,6 +1169,12 @@ static void ib_cache_event(struct ib_event_handler *handler,
 			INIT_WORK(&work->work, ib_cache_task);
 			work->device   = event->device;
 			work->port_num = event->element.port_num;
+			if (event->event == IB_EVENT_PKEY_CHANGE ||
+			    event->event == IB_EVENT_GID_CHANGE)
+				work->enforce_security = true;
+			else
+				work->enforce_security = false;
+
 			queue_work(ib_wq, &work->work);
 		}
 	}
@@ -1162,30 +1190,23 @@ int ib_cache_setup_one(struct ib_device *device)
 	device->cache.ports =
 		kzalloc(sizeof(*device->cache.ports) *
 			(rdma_end_port(device) - rdma_start_port(device) + 1), GFP_KERNEL);
-	if (!device->cache.ports) {
-		err = -ENOMEM;
-		goto out;
-	}
+	if (!device->cache.ports)
+		return -ENOMEM;
 
 	err = gid_table_setup_one(device);
-	if (err)
-		goto out;
+	if (err) {
+		kfree(device->cache.ports);
+		device->cache.ports = NULL;
+		return err;
+	}
 
 	for (p = 0; p <= rdma_end_port(device) - rdma_start_port(device); ++p)
-		ib_cache_update(device, p + rdma_start_port(device));
+		ib_cache_update(device, p + rdma_start_port(device), true);
 
 	INIT_IB_EVENT_HANDLER(&device->cache.event_handler,
 			      device, ib_cache_event);
-	err = ib_register_event_handler(&device->cache.event_handler);
-	if (err)
-		goto err;
-
+	ib_register_event_handler(&device->cache.event_handler);
 	return 0;
-
-err:
-	gid_table_cleanup_one(device);
-out:
-	return err;
 }
 
 void ib_cache_release_one(struct ib_device *device)

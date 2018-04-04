@@ -98,21 +98,7 @@ extern u64 ppc64_pft_size;
 #define GET_LOW_SLICE_INDEX(addr)	((addr) >> SLICE_LOW_SHIFT)
 #define GET_HIGH_SLICE_INDEX(addr)	((addr) >> SLICE_HIGH_SHIFT)
 
-/*
- * 1 bit per slice and we have one slice per 1TB
- * Right now we support only 64TB.
- * IF we change this we will have to change the type
- * of high_slices
- */
-#define SLICE_MASK_SIZE 8
-
 #ifndef __ASSEMBLY__
-
-struct slice_mask {
-	u16 low_slices;
-	u64 high_slices;
-};
-
 struct mm_struct;
 
 extern unsigned long slice_get_unmapped_area(unsigned long addr,
@@ -131,21 +117,21 @@ extern void slice_set_range_psize(struct mm_struct *mm, unsigned long start,
 #endif /* __ASSEMBLY__ */
 #else
 #define slice_init()
-#ifdef CONFIG_PPC_STD_MMU_64
+#ifdef CONFIG_PPC_BOOK3S_64
 #define get_slice_psize(mm, addr)	((mm)->context.user_psize)
 #define slice_set_user_psize(mm, psize)		\
 do {						\
 	(mm)->context.user_psize = (psize);	\
 	(mm)->context.sllp = SLB_VSID_USER | mmu_psize_defs[(psize)].sllp; \
 } while (0)
-#else /* CONFIG_PPC_STD_MMU_64 */
+#else /* !CONFIG_PPC_BOOK3S_64 */
 #ifdef CONFIG_PPC_64K_PAGES
 #define get_slice_psize(mm, addr)	MMU_PAGE_64K
 #else /* CONFIG_PPC_64K_PAGES */
 #define get_slice_psize(mm, addr)	MMU_PAGE_4K
 #endif /* !CONFIG_PPC_64K_PAGES */
 #define slice_set_user_psize(mm, psize)	do { BUG(); } while(0)
-#endif /* !CONFIG_PPC_STD_MMU_64 */
+#endif /* CONFIG_PPC_BOOK3S_64 */
 
 #define slice_set_range_psize(mm, start, len, psize)	\
 	slice_set_user_psize((mm), (psize))

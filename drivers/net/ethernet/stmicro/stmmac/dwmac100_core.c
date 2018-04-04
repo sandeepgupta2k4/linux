@@ -25,15 +25,26 @@
 *******************************************************************************/
 
 #include <linux/crc32.h>
+#include <net/dsa.h>
 #include <asm/io.h>
 #include "dwmac100.h"
 
-static void dwmac100_core_init(struct mac_device_info *hw, int mtu)
+static void dwmac100_core_init(struct mac_device_info *hw,
+			       struct net_device *dev)
 {
 	void __iomem *ioaddr = hw->pcsr;
 	u32 value = readl(ioaddr + MAC_CONTROL);
 
-	writel((value | MAC_CORE_INIT), ioaddr + MAC_CONTROL);
+	value |= MAC_CORE_INIT;
+
+	/* Clear ASTP bit because Ethernet switch tagging formats such as
+	 * Broadcom tags can look like invalid LLC/SNAP packets and cause the
+	 * hardware to truncate packets on reception.
+	 */
+	if (netdev_uses_dsa(dev))
+		value &= ~MAC_CONTROL_ASTP;
+
+	writel(value, ioaddr + MAC_CONTROL);
 
 #ifdef STMMAC_VLAN_TAG_USED
 	writel(ETH_P_8021Q, ioaddr + MAC_VLAN1);
@@ -175,9 +186,11 @@ struct mac_device_info *dwmac100_setup(void __iomem *ioaddr, int *synopsys_id)
 	mac->mac = &dwmac100_ops;
 	mac->dma = &dwmac100_dma_ops;
 
-	mac->link.port = MAC_CONTROL_PS;
 	mac->link.duplex = MAC_CONTROL_F;
-	mac->link.speed = 0;
+	mac->link.speed10 = 0;
+	mac->link.speed100 = 0;
+	mac->link.speed1000 = 0;
+	mac->link.speed_mask = MAC_CONTROL_PS;
 	mac->mii.addr = MAC_MII_ADDR;
 	mac->mii.data = MAC_MII_DATA;
 	mac->mii.addr_shift = 11;

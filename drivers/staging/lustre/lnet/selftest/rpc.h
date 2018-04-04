@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -33,7 +34,7 @@
 #ifndef __SELFTEST_RPC_H__
 #define __SELFTEST_RPC_H__
 
-#include "../../include/linux/lnet/lnetst.h"
+#include <uapi/linux/lnet/lnetst.h>
 
 /*
  * LST wired structures
@@ -163,7 +164,7 @@ struct srpc_stat_reply {
 	struct lst_sid	   str_sid;
 	struct sfw_counters	str_fw;
 	struct srpc_counters	str_rpc;
-	lnet_counters_t    str_lnet;
+	struct lnet_counters    str_lnet;
 } WIRE_ATTR;
 
 struct test_bulk_req {

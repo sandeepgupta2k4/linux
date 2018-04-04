@@ -114,7 +114,7 @@ static int __must_check ax25_rt_add(struct ax25_routes_struct *route)
 		return -ENOMEM;
 	}
 
-	atomic_set(&ax25_rt->refcount, 1);
+	refcount_set(&ax25_rt->refcount, 1);
 	ax25_rt->callsign     = route->dest_addr;
 	ax25_rt->dev          = ax25_dev->dev;
 	ax25_rt->digipeat     = NULL;
@@ -336,7 +336,6 @@ static int ax25_rt_info_open(struct inode *inode, struct file *file)
 }
 
 const struct file_operations ax25_route_fops = {
-	.owner = THIS_MODULE,
 	.open = ax25_rt_info_open,
 	.read = seq_read,
 	.llseek = seq_lseek,

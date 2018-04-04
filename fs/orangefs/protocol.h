@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/spinlock_types.h>
@@ -138,13 +139,8 @@ typedef __s64 ORANGEFS_offset;
 #define ORANGEFS_G_SGID    (1 << 10)
 #define ORANGEFS_U_SUID    (1 << 11)
 
-/* definition taken from stdint.h */
-#define INT32_MAX (2147483647)
-#define ORANGEFS_ITERATE_START    (INT32_MAX - 1)
-#define ORANGEFS_ITERATE_END      (INT32_MAX - 2)
-#define ORANGEFS_ITERATE_NEXT     (INT32_MAX - 3)
-#define ORANGEFS_READDIR_START ORANGEFS_ITERATE_START
-#define ORANGEFS_READDIR_END   ORANGEFS_ITERATE_END
+#define ORANGEFS_ITERATE_START    2147483646
+#define ORANGEFS_ITERATE_END      2147483645
 #define ORANGEFS_IMMUTABLE_FL FS_IMMUTABLE_FL
 #define ORANGEFS_APPEND_FL    FS_APPEND_FL
 #define ORANGEFS_NOATIME_FL   FS_NOATIME_FL
@@ -399,13 +395,6 @@ struct ORANGEFS_dev_map_desc {
 
 /* gossip.h *****************************************************************/
 
-#ifdef GOSSIP_DISABLE_DEBUG
-#define gossip_debug(mask, fmt, ...)					\
-do {									\
-	if (0)								\
-		printk(KERN_DEBUG fmt, ##__VA_ARGS__);			\
-} while (0)
-#else
 extern __u64 orangefs_gossip_debug_mask;
 
 /* try to avoid function call overhead by checking masks in macro */
@@ -414,13 +403,5 @@ do {									\
 	if (orangefs_gossip_debug_mask & (mask))			\
 		printk(KERN_DEBUG fmt, ##__VA_ARGS__);			\
 } while (0)
-#endif /* GOSSIP_DISABLE_DEBUG */
-
-/* do file and line number printouts w/ the GNU preprocessor */
-#define gossip_ldebug(mask, fmt, ...)					\
-	gossip_debug(mask, "%s: " fmt, __func__, ##__VA_ARGS__)
 
 #define gossip_err pr_err
-#define gossip_lerr(fmt, ...)						\
-	gossip_err("%s line %d: " fmt,					\
-		   __FILE__, __LINE__, ##__VA_ARGS__)

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 # Makefile for powerpc selftests
 
 # ARCH can be overridden by the user for cross compiling
@@ -14,6 +15,7 @@ export CFLAGS
 
 SUB_DIRS = alignment		\
 	   benchmarks		\
+	   cache_shape		\
 	   copyloops		\
 	   context_switch	\
 	   dscr			\
@@ -59,12 +61,13 @@ override define EMIT_TESTS
 	done;
 endef
 
-clean:
+override define CLEAN
 	@for TARGET in $(SUB_DIRS); do \
 		BUILD_TARGET=$(OUTPUT)/$$TARGET;	\
 		$(MAKE) OUTPUT=$$BUILD_TARGET -C $$TARGET clean; \
 	done;
 	rm -f tags
+endef
 
 tags:
 	find . -name '*.c' -o -name '*.h' | xargs ctags

@@ -1,12 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the PCI bus specific drivers.
 #
 
-obj-y		+= access.o bus.o probe.o host-bridge.o remove.o pci.o \
+obj-$(CONFIG_PCI)	+= access.o bus.o probe.o host-bridge.o remove.o pci.o \
 			pci-driver.o search.o pci-sysfs.o rom.o setup-res.o \
-			irq.o vpd.o setup-bus.o vc.o
+			irq.o vpd.o setup-bus.o vc.o mmap.o setup-irq.o
+
+ifdef CONFIG_PCI
 obj-$(CONFIG_PROC_FS) += proc.o
 obj-$(CONFIG_SYSFS) += slot.o
+obj-$(CONFIG_OF) += of.o
+endif
 
 obj-$(CONFIG_PCI_QUIRKS) += quirks.o
 
@@ -15,32 +20,12 @@ obj-$(CONFIG_PCIEPORTBUS) += pcie/
 
 # Build the PCI Hotplug drivers if we were asked to
 obj-$(CONFIG_HOTPLUG_PCI) += hotplug/
-ifdef CONFIG_HOTPLUG_PCI
-obj-y += hotplug-pci.o
-endif
 
 # Build the PCI MSI interrupt support
 obj-$(CONFIG_PCI_MSI) += msi.o
 
-# Build the Hypertransport interrupt support
-obj-$(CONFIG_HT_IRQ) += htirq.o
-
 obj-$(CONFIG_PCI_ATS) += ats.o
 obj-$(CONFIG_PCI_IOV) += iov.o
-
-#
-# Some architectures use the generic PCI setup functions
-#
-obj-$(CONFIG_ALPHA) += setup-irq.o
-obj-$(CONFIG_ARC) += setup-irq.o
-obj-$(CONFIG_ARM) += setup-irq.o
-obj-$(CONFIG_ARM64) += setup-irq.o
-obj-$(CONFIG_UNICORE32) += setup-irq.o
-obj-$(CONFIG_SUPERH) += setup-irq.o
-obj-$(CONFIG_MIPS) += setup-irq.o
-obj-$(CONFIG_TILE) += setup-irq.o
-obj-$(CONFIG_SPARC_LEON) += setup-irq.o
-obj-$(CONFIG_M68K) += setup-irq.o
 
 #
 # ACPI Related PCI FW Functions
@@ -62,9 +47,15 @@ obj-$(CONFIG_PCI_ECAM) += ecam.o
 
 obj-$(CONFIG_XEN_PCIDEV_FRONTEND) += xen-pcifront.o
 
-obj-$(CONFIG_OF) += of.o
-
 ccflags-$(CONFIG_PCI_DEBUG) := -DDEBUG
 
 # PCI host controller drivers
 obj-y += host/
+obj-y += switch/
+
+obj-$(CONFIG_PCI_ENDPOINT)	+= endpoint/
+
+# Endpoint library must be initialized before its users
+obj-$(CONFIG_PCIE_CADENCE)	+= cadence/
+# pcie-hisi.o quirks are needed even without CONFIG_PCIE_DW
+obj-y				+= dwc/

@@ -152,7 +152,7 @@ void synproxy_init_timestamp_cookie(const struct xt_synproxy_info *info,
 				    struct synproxy_options *opts)
 {
 	opts->tsecr = opts->tsval;
-	opts->tsval = tcp_time_stamp & ~0x3f;
+	opts->tsval = tcp_time_stamp_raw() & ~0x3f;
 
 	if (opts->options & XT_SYNPROXY_OPT_WSCALE) {
 		opts->tsval |= opts->wscale;
@@ -317,7 +317,6 @@ static int synproxy_cpu_seq_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations synproxy_cpu_seq_fops = {
-	.owner		= THIS_MODULE,
 	.open		= synproxy_cpu_seq_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -326,7 +325,7 @@ static const struct file_operations synproxy_cpu_seq_fops = {
 
 static int __net_init synproxy_proc_init(struct net *net)
 {
-	if (!proc_create("synproxy", S_IRUGO, net->proc_net_stat,
+	if (!proc_create("synproxy", 0444, net->proc_net_stat,
 			 &synproxy_cpu_seq_fops))
 		return -ENOMEM;
 	return 0;

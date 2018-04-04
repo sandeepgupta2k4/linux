@@ -80,22 +80,8 @@ static const struct hts221_transfer_function hts221_transfer_fn = {
 
 static int hts221_spi_probe(struct spi_device *spi)
 {
-	struct hts221_hw *hw;
-	struct iio_dev *iio_dev;
-
-	iio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*hw));
-	if (!iio_dev)
-		return -ENOMEM;
-
-	spi_set_drvdata(spi, iio_dev);
-
-	hw = iio_priv(iio_dev);
-	hw->name = spi->modalias;
-	hw->dev = &spi->dev;
-	hw->irq = spi->irq;
-	hw->tf = &hts221_transfer_fn;
-
-	return hts221_probe(iio_dev);
+	return hts221_probe(&spi->dev, spi->irq,
+			    spi->modalias, &hts221_transfer_fn);
 }
 
 static const struct of_device_id hts221_spi_of_match[] = {
@@ -113,6 +99,7 @@ MODULE_DEVICE_TABLE(spi, hts221_spi_id_table);
 static struct spi_driver hts221_driver = {
 	.driver = {
 		.name = "hts221_spi",
+		.pm = &hts221_pm_ops,
 		.of_match_table = of_match_ptr(hts221_spi_of_match),
 	},
 	.probe = hts221_spi_probe,

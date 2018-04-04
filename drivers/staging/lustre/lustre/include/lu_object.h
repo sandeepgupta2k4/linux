@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -35,9 +36,9 @@
 
 #include <stdarg.h>
 #include <linux/percpu_counter.h>
-#include "../../include/linux/libcfs/libcfs.h"
-#include "lustre/lustre_idl.h"
-#include "lu_ref.h"
+#include <linux/libcfs/libcfs.h>
+#include <uapi/linux/lustre/lustre_idl.h>
+#include <lu_ref.h>
 
 struct seq_file;
 struct lustre_cfg;
@@ -147,9 +148,9 @@ struct lu_device_operations {
 				     struct lu_device *);
 
 	/**
-	 * initialize local objects for device. this method called after layer has
-	 * been initialized (after LCFG_SETUP stage) and before it starts serving
-	 * user requests.
+	 * initialize local objects for device. this method called after layer
+	 * has been initialized (after LCFG_SETUP stage) and before it starts
+	 * serving user requests.
 	 */
 
 	int (*ldo_prepare)(const struct lu_env *,
@@ -791,7 +792,7 @@ int lu_cdebug_printer(const struct lu_env *env,
 #define LU_OBJECT_DEBUG(mask, env, object, format, ...)		   \
 do {								      \
 	if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {		     \
-		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);		\
+		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);	\
 		lu_object_print(env, &msgdata, lu_cdebug_printer, object);\
 		CDEBUG(mask, format "\n", ## __VA_ARGS__);		    \
 	}								 \
@@ -803,7 +804,7 @@ do {								      \
 #define LU_OBJECT_HEADER(mask, env, object, format, ...)		\
 do {								    \
 	if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {		   \
-		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);		\
+		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);	\
 		lu_object_header_print(env, &msgdata, lu_cdebug_printer,\
 				       (object)->lo_header);	    \
 		lu_cdebug_printer(env, &msgdata, "\n");		 \
@@ -968,11 +969,11 @@ struct lu_context {
 	 * Version counter used to skip calls to lu_context_refill() when no
 	 * keys were registered.
 	 */
-	unsigned	       lc_version;
+	unsigned int		lc_version;
 	/**
 	 * Debugging cookie.
 	 */
-	unsigned	       lc_cookie;
+	unsigned int		lc_cookie;
 };
 
 /**
@@ -1130,7 +1131,7 @@ struct lu_context_key {
 	{							 \
 		type *value;				      \
 								  \
-		BUILD_BUG_ON(PAGE_SIZE < sizeof(*value));        \
+		BUILD_BUG_ON(sizeof(*value) > PAGE_SIZE);        \
 								  \
 		value = kzalloc(sizeof(*value), GFP_NOFS);	\
 		if (!value)				\
@@ -1303,8 +1304,6 @@ struct lu_buf {
 	size_t	lb_len;
 };
 
-#define DLUBUF "(%p %zu)"
-#define PLUBUF(buf) (buf)->lb_buf, (buf)->lb_len
 /**
  * One-time initializers, called at obdclass module initialization, not
  * exported.

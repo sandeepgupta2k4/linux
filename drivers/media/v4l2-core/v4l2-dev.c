@@ -102,7 +102,7 @@ static DECLARE_BITMAP(devnode_nums[VFL_TYPE_MAX], VIDEO_NUM_DEVICES);
 
 #ifdef CONFIG_VIDEO_FIXED_MINOR_RANGES
 /* Return the bitmap corresponding to vfl_type. */
-static inline unsigned long *devnode_bits(int vfl_type)
+static inline unsigned long *devnode_bits(enum vfl_devnode_type vfl_type)
 {
 	/* Any types not assigned to fixed minor ranges must be mapped to
 	   one single bitmap for the purposes of finding a free node number
@@ -113,7 +113,7 @@ static inline unsigned long *devnode_bits(int vfl_type)
 }
 #else
 /* Return the bitmap corresponding to vfl_type. */
-static inline unsigned long *devnode_bits(int vfl_type)
+static inline unsigned long *devnode_bits(enum vfl_devnode_type vfl_type)
 {
 	return devnode_nums[vfl_type];
 }
@@ -331,10 +331,10 @@ static ssize_t v4l2_write(struct file *filp, const char __user *buf,
 	return ret;
 }
 
-static unsigned int v4l2_poll(struct file *filp, struct poll_table_struct *poll)
+static __poll_t v4l2_poll(struct file *filp, struct poll_table_struct *poll)
 {
 	struct video_device *vdev = video_devdata(filp);
-	unsigned int res = POLLERR | POLLHUP;
+	__poll_t res = EPOLLERR | EPOLLHUP;
 
 	if (!vdev->fops->poll)
 		return DEFAULT_POLLMASK;
@@ -575,30 +575,34 @@ static void determine_valid_ioctls(struct video_device *vdev)
 		set_bit(_IOC_NR(VIDIOC_ENUM_FREQ_BANDS), valid_ioctls);
 
 	if (is_vid || is_tch) {
-		/* video specific ioctls */
+		/* video and metadata specific ioctls */
 		if ((is_rx && (ops->vidioc_enum_fmt_vid_cap ||
 			       ops->vidioc_enum_fmt_vid_cap_mplane ||
-			       ops->vidioc_enum_fmt_vid_overlay)) ||
+			       ops->vidioc_enum_fmt_vid_overlay ||
+			       ops->vidioc_enum_fmt_meta_cap)) ||
 		    (is_tx && (ops->vidioc_enum_fmt_vid_out ||
 			       ops->vidioc_enum_fmt_vid_out_mplane)))
 			set_bit(_IOC_NR(VIDIOC_ENUM_FMT), valid_ioctls);
 		if ((is_rx && (ops->vidioc_g_fmt_vid_cap ||
 			       ops->vidioc_g_fmt_vid_cap_mplane ||
-			       ops->vidioc_g_fmt_vid_overlay)) ||
+			       ops->vidioc_g_fmt_vid_overlay ||
+			       ops->vidioc_g_fmt_meta_cap)) ||
 		    (is_tx && (ops->vidioc_g_fmt_vid_out ||
 			       ops->vidioc_g_fmt_vid_out_mplane ||
 			       ops->vidioc_g_fmt_vid_out_overlay)))
 			 set_bit(_IOC_NR(VIDIOC_G_FMT), valid_ioctls);
 		if ((is_rx && (ops->vidioc_s_fmt_vid_cap ||
 			       ops->vidioc_s_fmt_vid_cap_mplane ||
-			       ops->vidioc_s_fmt_vid_overlay)) ||
+			       ops->vidioc_s_fmt_vid_overlay ||
+			       ops->vidioc_s_fmt_meta_cap)) ||
 		    (is_tx && (ops->vidioc_s_fmt_vid_out ||
 			       ops->vidioc_s_fmt_vid_out_mplane ||
 			       ops->vidioc_s_fmt_vid_out_overlay)))
 			 set_bit(_IOC_NR(VIDIOC_S_FMT), valid_ioctls);
 		if ((is_rx && (ops->vidioc_try_fmt_vid_cap ||
 			       ops->vidioc_try_fmt_vid_cap_mplane ||
-			       ops->vidioc_try_fmt_vid_overlay)) ||
+			       ops->vidioc_try_fmt_vid_overlay ||
+			       ops->vidioc_try_fmt_meta_cap)) ||
 		    (is_tx && (ops->vidioc_try_fmt_vid_out ||
 			       ops->vidioc_try_fmt_vid_out_mplane ||
 			       ops->vidioc_try_fmt_vid_out_overlay)))
@@ -664,7 +668,7 @@ static void determine_valid_ioctls(struct video_device *vdev)
 	}
 
 	if (is_vid || is_vbi || is_sdr || is_tch) {
-		/* ioctls valid for video, vbi or sdr */
+		/* ioctls valid for video, metadata, vbi or sdr */
 		SET_VALID_IOCTL(ops, VIDIOC_REQBUFS, vidioc_reqbufs);
 		SET_VALID_IOCTL(ops, VIDIOC_QUERYBUF, vidioc_querybuf);
 		SET_VALID_IOCTL(ops, VIDIOC_QBUF, vidioc_qbuf);
@@ -817,8 +821,10 @@ static int video_register_media_controller(struct video_device *vdev, int type)
 	return 0;
 }
 
-int __video_register_device(struct video_device *vdev, int type, int nr,
-		int warn_if_nr_in_use, struct module *owner)
+int __video_register_device(struct video_device *vdev,
+			    enum vfl_devnode_type type,
+			    int nr, int warn_if_nr_in_use,
+			    struct module *owner)
 {
 	int i = 0;
 	int ret;

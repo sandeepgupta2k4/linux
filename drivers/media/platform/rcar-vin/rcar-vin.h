@@ -38,13 +38,11 @@ enum chip_id {
 /**
  * STOPPED  - No operation in progress
  * RUNNING  - Operation in progress have buffers
- * STALLED  - No operation in progress have no buffers
  * STOPPING - Stopping operation
  */
 enum rvin_dma_state {
 	STOPPED = 0,
 	RUNNING,
-	STALLED,
 	STOPPING,
 };
 
@@ -74,6 +72,8 @@ struct rvin_video_format {
  * @subdev:	subdevice matched using async framework
  * @code:	Media bus format from source
  * @mbus_cfg:	Media bus format from DT
+ * @source_pad:	source pad of remote subdevice
+ * @sink_pad:	sink pad of remote subdevice
  */
 struct rvin_graph_entity {
 	struct v4l2_async_subdev asd;
@@ -81,6 +81,9 @@ struct rvin_graph_entity {
 
 	u32 code;
 	struct v4l2_mbus_config mbus_cfg;
+
+	unsigned int source_pad;
+	unsigned int sink_pad;
 };
 
 /**
@@ -91,20 +94,19 @@ struct rvin_graph_entity {
  *
  * @vdev:		V4L2 video device associated with VIN
  * @v4l2_dev:		V4L2 device
- * @src_pad_idx:	source pad index for media controller drivers
- * @sink_pad_idx:	sink pad index for media controller drivers
  * @ctrl_handler:	V4L2 control handler
  * @notifier:		V4L2 asynchronous subdevs notifier
  * @digital:		entity in the DT for local digital subdevice
  *
  * @lock:		protects @queue
  * @queue:		vb2 buffers queue
+ * @scratch:		cpu address for scratch buffer
+ * @scratch_phys:	physical address of the scratch buffer
  *
- * @qlock:		protects @queue_buf, @buf_list, @continuous, @sequence
+ * @qlock:		protects @queue_buf, @buf_list, @sequence
  *			@state
  * @queue_buf:		Keeps track of buffers given to HW slot
  * @buf_list:		list of queued buffers
- * @continuous:		tracks if active operation is continuous or single mode
  * @sequence:		V4L2 buffers sequence number
  * @state:		keeps track of operation state
  *
@@ -121,19 +123,18 @@ struct rvin_dev {
 
 	struct video_device vdev;
 	struct v4l2_device v4l2_dev;
-	int src_pad_idx;
-	int sink_pad_idx;
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_async_notifier notifier;
-	struct rvin_graph_entity digital;
+	struct rvin_graph_entity *digital;
 
 	struct mutex lock;
 	struct vb2_queue queue;
+	void *scratch;
+	dma_addr_t scratch_phys;
 
 	spinlock_t qlock;
 	struct vb2_v4l2_buffer *queue_buf[HW_BUFFER_NUM];
 	struct list_head buf_list;
-	bool continuous;
 	unsigned int sequence;
 	enum rvin_dma_state state;
 
@@ -144,7 +145,7 @@ struct rvin_dev {
 	struct v4l2_rect compose;
 };
 
-#define vin_to_source(vin)		vin->digital.subdev
+#define vin_to_source(vin)		((vin)->digital->subdev)
 
 /* Debug */
 #define vin_dbg(d, fmt, arg...)		dev_dbg(d->dev, fmt, ##arg)

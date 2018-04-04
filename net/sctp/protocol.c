@@ -80,56 +80,6 @@ long sysctl_sctp_mem[3];
 int sysctl_sctp_rmem[3];
 int sysctl_sctp_wmem[3];
 
-/* Set up the proc fs entry for the SCTP protocol. */
-static int __net_init sctp_proc_init(struct net *net)
-{
-#ifdef CONFIG_PROC_FS
-	net->sctp.proc_net_sctp = proc_net_mkdir(net, "sctp", net->proc_net);
-	if (!net->sctp.proc_net_sctp)
-		goto out_proc_net_sctp;
-	if (sctp_snmp_proc_init(net))
-		goto out_snmp_proc_init;
-	if (sctp_eps_proc_init(net))
-		goto out_eps_proc_init;
-	if (sctp_assocs_proc_init(net))
-		goto out_assocs_proc_init;
-	if (sctp_remaddr_proc_init(net))
-		goto out_remaddr_proc_init;
-
-	return 0;
-
-out_remaddr_proc_init:
-	sctp_assocs_proc_exit(net);
-out_assocs_proc_init:
-	sctp_eps_proc_exit(net);
-out_eps_proc_init:
-	sctp_snmp_proc_exit(net);
-out_snmp_proc_init:
-	remove_proc_entry("sctp", net->proc_net);
-	net->sctp.proc_net_sctp = NULL;
-out_proc_net_sctp:
-	return -ENOMEM;
-#endif /* CONFIG_PROC_FS */
-	return 0;
-}
-
-/* Clean up the proc fs entry for the SCTP protocol.
- * Note: Do not make this __exit as it is used in the init error
- * path.
- */
-static void sctp_proc_exit(struct net *net)
-{
-#ifdef CONFIG_PROC_FS
-	sctp_snmp_proc_exit(net);
-	sctp_eps_proc_exit(net);
-	sctp_assocs_proc_exit(net);
-	sctp_remaddr_proc_exit(net);
-
-	remove_proc_entry("sctp", net->proc_net);
-	net->sctp.proc_net_sctp = NULL;
-#endif
-}
-
 /* Private helper to extract ipv4 address and stash them in
  * the protocol structure.
  */
@@ -196,7 +146,7 @@ static void sctp_free_local_addr_list(struct net *net)
 
 /* Copy the local addresses which are valid for 'scope' into 'bp'.  */
 int sctp_copy_local_addr_list(struct net *net, struct sctp_bind_addr *bp,
-			      sctp_scope_t scope, gfp_t gfp, int copy_flags)
+			      enum sctp_scope scope, gfp_t gfp, int copy_flags)
 {
 	struct sctp_sockaddr_entry *addr;
 	union sctp_addr laddr;
@@ -292,7 +242,7 @@ static void sctp_v4_from_addr_param(union sctp_addr *addr,
 static int sctp_v4_to_addr_param(const union sctp_addr *addr,
 				 union sctp_addr_param *param)
 {
-	int length = sizeof(sctp_ipv4addr_param_t);
+	int length = sizeof(struct sctp_ipv4addr_param);
 
 	param->v4.param_hdr.type = SCTP_PARAM_IPV4_ADDRESS;
 	param->v4.param_hdr.length = htons(length);
@@ -400,9 +350,9 @@ static int sctp_v4_available(union sctp_addr *addr, struct sctp_sock *sp)
  * IPv4 scoping can be controlled through sysctl option
  * net.sctp.addr_scope_policy
  */
-static sctp_scope_t sctp_v4_scope(union sctp_addr *addr)
+static enum sctp_scope sctp_v4_scope(union sctp_addr *addr)
 {
-	sctp_scope_t retval;
+	enum sctp_scope retval;
 
 	/* Check for unusable SCTP addresses. */
 	if (IS_IPV4_UNUSABLE_ADDRESS(addr->v4.sin_addr.s_addr)) {
@@ -514,22 +464,20 @@ static void sctp_v4_get_dst(struct sctp_transport *t, union sctp_addr *saddr,
 		if (IS_ERR(rt))
 			continue;
 
-		if (!dst)
-			dst = &rt->dst;
-
 		/* Ensure the src address belongs to the output
 		 * interface.
 		 */
 		odev = __ip_dev_find(sock_net(sk), laddr->a.v4.sin_addr.s_addr,
 				     false);
 		if (!odev || odev->ifindex != fl4->flowi4_oif) {
-			if (&rt->dst != dst)
+			if (!dst)
+				dst = &rt->dst;
+			else
 				dst_release(&rt->dst);
 			continue;
 		}
 
-		if (dst != &rt->dst)
-			dst_release(dst);
+		dst_release(dst);
 		dst = &rt->dst;
 		break;
 	}
@@ -622,9 +570,9 @@ static void sctp_v4_ecn_capable(struct sock *sk)
 	INET_ECN_xmit(sk);
 }
 
-static void sctp_addr_wq_timeout_handler(unsigned long arg)
+static void sctp_addr_wq_timeout_handler(struct timer_list *t)
 {
-	struct net *net = (struct net *)arg;
+	struct net *net = from_timer(net, t, sctp.addr_wq_timer);
 	struct sctp_sockaddr_entry *addrw, *temp;
 	struct sctp_sock *sp;
 
@@ -1287,10 +1235,12 @@ static int __net_init sctp_defaults_init(struct net *net)
 	if (status)
 		goto err_init_mibs;
 
+#ifdef CONFIG_PROC_FS
 	/* Initialize proc fs directory.  */
 	status = sctp_proc_init(net);
 	if (status)
 		goto err_init_proc;
+#endif
 
 	sctp_dbg_objcnt_init(net);
 
@@ -1304,13 +1254,14 @@ static int __net_init sctp_defaults_init(struct net *net)
 	INIT_LIST_HEAD(&net->sctp.auto_asconf_splist);
 	spin_lock_init(&net->sctp.addr_wq_lock);
 	net->sctp.addr_wq_timer.expires = 0;
-	setup_timer(&net->sctp.addr_wq_timer, sctp_addr_wq_timeout_handler,
-		    (unsigned long)net);
+	timer_setup(&net->sctp.addr_wq_timer, sctp_addr_wq_timeout_handler, 0);
 
 	return 0;
 
+#ifdef CONFIG_PROC_FS
 err_init_proc:
 	cleanup_sctp_mibs(net);
+#endif
 err_init_mibs:
 	sctp_sysctl_net_unregister(net);
 err_sysctl_register:
@@ -1323,9 +1274,10 @@ static void __net_exit sctp_defaults_exit(struct net *net)
 	sctp_free_addr_wq(net);
 	sctp_free_local_addr_list(net);
 
-	sctp_dbg_objcnt_exit(net);
-
-	sctp_proc_exit(net);
+#ifdef CONFIG_PROC_FS
+	remove_proc_subtree("sctp", net->proc_net);
+	net->sctp.proc_net_sctp = NULL;
+#endif
 	cleanup_sctp_mibs(net);
 	sctp_sysctl_net_unregister(net);
 }
@@ -1500,6 +1452,7 @@ static __init int sctp_init(void)
 	INIT_LIST_HEAD(&sctp_address_families);
 	sctp_v4_pf_init();
 	sctp_v6_pf_init();
+	sctp_sched_ops_init();
 
 	status = register_pernet_subsys(&sctp_defaults_ops);
 	if (status)

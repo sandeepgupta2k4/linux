@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* Intel(R) Gigabit Ethernet Linux driver
  * Copyright(c) 2007-2014 Intel Corporation.
  *
@@ -90,6 +91,7 @@ static const struct igb_stats igb_gstrings_stats[] = {
 	IGB_STAT("os2bmc_tx_by_host", stats.o2bspc),
 	IGB_STAT("os2bmc_rx_by_host", stats.b2ogprc),
 	IGB_STAT("tx_hwtstamp_timeouts", tx_hwtstamp_timeouts),
+	IGB_STAT("tx_hwtstamp_skipped", tx_hwtstamp_skipped),
 	IGB_STAT("rx_hwtstamp_cleared", rx_hwtstamp_cleared),
 };
 
@@ -2315,7 +2317,7 @@ static void igb_get_ethtool_stats(struct net_device *netdev,
 	char *p;
 
 	spin_lock(&adapter->stats64_lock);
-	igb_update_stats(adapter, net_stats);
+	igb_update_stats(adapter);
 
 	for (i = 0; i < IGB_GLOBAL_STATS_LEN; i++) {
 		p = (char *)adapter + igb_gstrings_stats[i].stat_offset;
@@ -3337,37 +3339,7 @@ static int igb_set_rxfh(struct net_device *netdev, const u32 *indir,
 
 static unsigned int igb_max_channels(struct igb_adapter *adapter)
 {
-	struct e1000_hw *hw = &adapter->hw;
-	unsigned int max_combined = 0;
-
-	switch (hw->mac.type) {
-	case e1000_i211:
-		max_combined = IGB_MAX_RX_QUEUES_I211;
-		break;
-	case e1000_82575:
-	case e1000_i210:
-		max_combined = IGB_MAX_RX_QUEUES_82575;
-		break;
-	case e1000_i350:
-		if (!!adapter->vfs_allocated_count) {
-			max_combined = 1;
-			break;
-		}
-		/* fall through */
-	case e1000_82576:
-		if (!!adapter->vfs_allocated_count) {
-			max_combined = 2;
-			break;
-		}
-		/* fall through */
-	case e1000_82580:
-	case e1000_i354:
-	default:
-		max_combined = IGB_MAX_RX_QUEUES;
-		break;
-	}
-
-	return max_combined;
+	return igb_get_max_rss_queues(adapter);
 }
 
 static void igb_get_channels(struct net_device *netdev,

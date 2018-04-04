@@ -51,7 +51,7 @@ do {							\
 	if (i2c_debug >= lvl) {				\
 		printk(KERN_DEBUG "%s at %s: " fmt,	\
 		       dev->name, __func__ , ##args);	\
-      } 						\
+      }							\
 } while (0)
 
 static inline int get_real_i2c_port(struct cx231xx *dev, int bus_nr)
@@ -459,7 +459,7 @@ static const struct i2c_algorithm cx231xx_algo = {
 	.functionality = functionality,
 };
 
-static struct i2c_adapter cx231xx_adap_template = {
+static const struct i2c_adapter cx231xx_adap_template = {
 	.owner = THIS_MODULE,
 	.name = "cx231xx",
 	.algo = &cx231xx_algo,
@@ -491,20 +491,24 @@ void cx231xx_do_i2c_scan(struct cx231xx *dev, int i2c_port)
 {
 	unsigned char buf;
 	int i, rc;
-	struct i2c_client client;
+	struct i2c_adapter *adap;
+	struct i2c_msg msg = {
+		.flags = I2C_M_RD,
+		.len = 1,
+		.buf = &buf,
+	};
 
 	if (!i2c_scan)
 		return;
 
 	/* Don't generate I2C errors during scan */
 	dev->i2c_scan_running = true;
-
-	memset(&client, 0, sizeof(client));
-	client.adapter = cx231xx_get_i2c_adap(dev, i2c_port);
+	adap = cx231xx_get_i2c_adap(dev, i2c_port);
 
 	for (i = 0; i < 128; i++) {
-		client.addr = i;
-		rc = i2c_master_recv(&client, &buf, 0);
+		msg.addr = i;
+		rc = i2c_transfer(adap, &msg, 1);
+
 		if (rc < 0)
 			continue;
 		dev_info(dev->dev,
@@ -534,7 +538,7 @@ int cx231xx_i2c_register(struct cx231xx_i2c *bus)
 
 	bus->i2c_adap.algo_data = bus;
 	i2c_set_adapdata(&bus->i2c_adap, &dev->v4l2_dev);
-	i2c_add_adapter(&bus->i2c_adap);
+	bus->i2c_rc = i2c_add_adapter(&bus->i2c_adap);
 
 	if (0 != bus->i2c_rc)
 		dev_warn(dev->dev,
@@ -547,10 +551,10 @@ int cx231xx_i2c_register(struct cx231xx_i2c *bus)
  * cx231xx_i2c_unregister()
  * unregister i2c_bus
  */
-int cx231xx_i2c_unregister(struct cx231xx_i2c *bus)
+void cx231xx_i2c_unregister(struct cx231xx_i2c *bus)
 {
-	i2c_del_adapter(&bus->i2c_adap);
-	return 0;
+	if (!bus->i2c_rc)
+		i2c_del_adapter(&bus->i2c_adap);
 }
 
 /*

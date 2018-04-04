@@ -24,22 +24,23 @@
  */
 
 #include <linux/firmware.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 #include "amdgpu.h"
 #include "amdgpu_psp.h"
 #include "amdgpu_ucode.h"
 #include "soc15_common.h"
 #include "psp_v3_1.h"
 
-#include "vega10/soc15ip.h"
-#include "vega10/MP/mp_9_0_offset.h"
-#include "vega10/MP/mp_9_0_sh_mask.h"
-#include "vega10/GC/gc_9_0_offset.h"
-#include "vega10/SDMA0/sdma0_4_0_offset.h"
-#include "vega10/NBIO/nbio_6_1_offset.h"
+#include "mp/mp_9_0_offset.h"
+#include "mp/mp_9_0_sh_mask.h"
+#include "gc/gc_9_0_offset.h"
+#include "sdma0/sdma0_4_0_offset.h"
+#include "nbio/nbio_6_1_offset.h"
 
 MODULE_FIRMWARE("amdgpu/vega10_sos.bin");
 MODULE_FIRMWARE("amdgpu/vega10_asd.bin");
+MODULE_FIRMWARE("amdgpu/vega12_sos.bin");
+MODULE_FIRMWARE("amdgpu/vega12_asd.bin");
 
 #define smnMP1_FIRMWARE_FLAGS 0x3010028
 
@@ -94,7 +95,7 @@ psp_v3_1_get_fw_type(struct amdgpu_firmware_info *ucode, enum psp_gfx_fw_type *t
 	return 0;
 }
 
-int psp_v3_1_init_microcode(struct psp_context *psp)
+static int psp_v3_1_init_microcode(struct psp_context *psp)
 {
 	struct amdgpu_device *adev = psp->adev;
 	const char *chip_name;
@@ -107,6 +108,9 @@ int psp_v3_1_init_microcode(struct psp_context *psp)
 	switch (adev->asic_type) {
 	case CHIP_VEGA10:
 		chip_name = "vega10";
+		break;
+	case CHIP_VEGA12:
+		chip_name = "vega12";
 		break;
 	default: BUG();
 	}
@@ -162,20 +166,17 @@ out:
 	return err;
 }
 
-int psp_v3_1_bootloader_load_sysdrv(struct psp_context *psp)
+static int psp_v3_1_bootloader_load_sysdrv(struct psp_context *psp)
 {
 	int ret;
 	uint32_t psp_gfxdrv_command_reg = 0;
-	struct amdgpu_bo *psp_sysdrv;
-	void *psp_sysdrv_virt = NULL;
-	uint64_t psp_sysdrv_mem;
 	struct amdgpu_device *adev = psp->adev;
-	uint32_t size, sol_reg;
+	uint32_t sol_reg;
 
 	/* Check sOS sign of life register to confirm sys driver and sOS
 	 * are already been loaded.
 	 */
-	sol_reg = RREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_81));
+	sol_reg = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_81);
 	if (sol_reg)
 		return 0;
 
@@ -185,29 +186,16 @@ int psp_v3_1_bootloader_load_sysdrv(struct psp_context *psp)
 	if (ret)
 		return ret;
 
-	/*
-	 * Create a 1 meg GART memory to store the psp sys driver
-	 * binary with a 1 meg aligned address
-	 */
-	size = (psp->sys_bin_size + (PSP_BOOTLOADER_1_MEG_ALIGNMENT - 1)) &
-		(~(PSP_BOOTLOADER_1_MEG_ALIGNMENT - 1));
-
-	ret = amdgpu_bo_create_kernel(adev, size, PSP_BOOTLOADER_1_MEG_ALIGNMENT,
-				      AMDGPU_GEM_DOMAIN_GTT,
-				      &psp_sysdrv,
-				      &psp_sysdrv_mem,
-				      &psp_sysdrv_virt);
-	if (ret)
-		return ret;
+	memset(psp->fw_pri_buf, 0, PSP_1_MEG);
 
 	/* Copy PSP System Driver binary to memory */
-	memcpy(psp_sysdrv_virt, psp->sys_start_addr, psp->sys_bin_size);
+	memcpy(psp->fw_pri_buf, psp->sys_start_addr, psp->sys_bin_size);
 
 	/* Provide the sys driver to bootrom */
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_36),
-	       (uint32_t)(psp_sysdrv_mem >> 20));
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_36,
+	       (uint32_t)(psp->fw_pri_mc_addr >> 20));
 	psp_gfxdrv_command_reg = 1 << 16;
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_35),
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_35,
 	       psp_gfxdrv_command_reg);
 
 	/* there might be handshake issue with hardware which needs delay */
@@ -216,25 +204,20 @@ int psp_v3_1_bootloader_load_sysdrv(struct psp_context *psp)
 	ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_35),
 			   0x80000000, 0x80000000, false);
 
-	amdgpu_bo_free_kernel(&psp_sysdrv, &psp_sysdrv_mem, &psp_sysdrv_virt);
-
 	return ret;
 }
 
-int psp_v3_1_bootloader_load_sos(struct psp_context *psp)
+static int psp_v3_1_bootloader_load_sos(struct psp_context *psp)
 {
 	int ret;
 	unsigned int psp_gfxdrv_command_reg = 0;
-	struct amdgpu_bo *psp_sos;
-	void *psp_sos_virt = NULL;
-	uint64_t psp_sos_mem;
 	struct amdgpu_device *adev = psp->adev;
-	uint32_t size, sol_reg;
+	uint32_t sol_reg;
 
 	/* Check sOS sign of life register to confirm sys driver and sOS
 	 * are already been loaded.
 	 */
-	sol_reg = RREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_81));
+	sol_reg = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_81);
 	if (sol_reg)
 		return 0;
 
@@ -244,41 +227,29 @@ int psp_v3_1_bootloader_load_sos(struct psp_context *psp)
 	if (ret)
 		return ret;
 
-	size = (psp->sos_bin_size + (PSP_BOOTLOADER_1_MEG_ALIGNMENT - 1)) &
-		(~((uint64_t)PSP_BOOTLOADER_1_MEG_ALIGNMENT - 1));
-
-	ret = amdgpu_bo_create_kernel(adev, size, PSP_BOOTLOADER_1_MEG_ALIGNMENT,
-				      AMDGPU_GEM_DOMAIN_GTT,
-				      &psp_sos,
-				      &psp_sos_mem,
-				      &psp_sos_virt);
-	if (ret)
-		return ret;
+	memset(psp->fw_pri_buf, 0, PSP_1_MEG);
 
 	/* Copy Secure OS binary to PSP memory */
-	memcpy(psp_sos_virt, psp->sos_start_addr, psp->sos_bin_size);
+	memcpy(psp->fw_pri_buf, psp->sos_start_addr, psp->sos_bin_size);
 
 	/* Provide the PSP secure OS to bootrom */
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_36),
-	       (uint32_t)(psp_sos_mem >> 20));
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_36,
+	       (uint32_t)(psp->fw_pri_mc_addr >> 20));
 	psp_gfxdrv_command_reg = 2 << 16;
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_35),
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_35,
 	       psp_gfxdrv_command_reg);
 
 	/* there might be handshake issue with hardware which needs delay */
 	mdelay(20);
-#if 0
 	ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_81),
-			   RREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_81)),
+			   RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_81),
 			   0, true);
-#endif
-
-	amdgpu_bo_free_kernel(&psp_sos, &psp_sos_mem, &psp_sos_virt);
 
 	return ret;
 }
 
-int psp_v3_1_prep_cmd_buf(struct amdgpu_firmware_info *ucode, struct psp_gfx_cmd_resp *cmd)
+static int psp_v3_1_prep_cmd_buf(struct amdgpu_firmware_info *ucode,
+				 struct psp_gfx_cmd_resp *cmd)
 {
 	int ret;
 	uint64_t fw_mem_mc_addr = ucode->mc_addr;
@@ -286,8 +257,8 @@ int psp_v3_1_prep_cmd_buf(struct amdgpu_firmware_info *ucode, struct psp_gfx_cmd
 	memset(cmd, 0, sizeof(struct psp_gfx_cmd_resp));
 
 	cmd->cmd_id = GFX_CMD_ID_LOAD_IP_FW;
-	cmd->cmd.cmd_load_ip_fw.fw_phy_addr_lo = (uint32_t)fw_mem_mc_addr;
-	cmd->cmd.cmd_load_ip_fw.fw_phy_addr_hi = (uint32_t)((uint64_t)fw_mem_mc_addr >> 32);
+	cmd->cmd.cmd_load_ip_fw.fw_phy_addr_lo = lower_32_bits(fw_mem_mc_addr);
+	cmd->cmd.cmd_load_ip_fw.fw_phy_addr_hi = upper_32_bits(fw_mem_mc_addr);
 	cmd->cmd.cmd_load_ip_fw.fw_size = ucode->ucode_size;
 
 	ret = psp_v3_1_get_fw_type(ucode, &cmd->cmd.cmd_load_ip_fw.fw_type);
@@ -297,10 +268,10 @@ int psp_v3_1_prep_cmd_buf(struct amdgpu_firmware_info *ucode, struct psp_gfx_cmd
 	return ret;
 }
 
-int psp_v3_1_ring_init(struct psp_context *psp, enum psp_ring_type ring_type)
+static int psp_v3_1_ring_init(struct psp_context *psp,
+			      enum psp_ring_type ring_type)
 {
 	int ret = 0;
-	unsigned int psp_ring_reg = 0;
 	struct psp_ring *ring;
 	struct amdgpu_device *adev = psp->adev;
 
@@ -320,19 +291,30 @@ int psp_v3_1_ring_init(struct psp_context *psp, enum psp_ring_type ring_type)
 		return ret;
 	}
 
+	return 0;
+}
+
+static int psp_v3_1_ring_create(struct psp_context *psp,
+				enum psp_ring_type ring_type)
+{
+	int ret = 0;
+	unsigned int psp_ring_reg = 0;
+	struct psp_ring *ring = &psp->km_ring;
+	struct amdgpu_device *adev = psp->adev;
+
 	/* Write low address of the ring to C2PMSG_69 */
 	psp_ring_reg = lower_32_bits(ring->ring_mem_mc_addr);
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_69), psp_ring_reg);
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_69, psp_ring_reg);
 	/* Write high address of the ring to C2PMSG_70 */
 	psp_ring_reg = upper_32_bits(ring->ring_mem_mc_addr);
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_70), psp_ring_reg);
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_70, psp_ring_reg);
 	/* Write size of ring to C2PMSG_71 */
 	psp_ring_reg = ring->ring_size;
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_71), psp_ring_reg);
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_71, psp_ring_reg);
 	/* Write the ring initialization command to C2PMSG_64 */
 	psp_ring_reg = ring_type;
 	psp_ring_reg = psp_ring_reg << 16;
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_64), psp_ring_reg);
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_64, psp_ring_reg);
 
 	/* there might be handshake issue with hardware which needs delay */
 	mdelay(20);
@@ -344,48 +326,101 @@ int psp_v3_1_ring_init(struct psp_context *psp, enum psp_ring_type ring_type)
 	return ret;
 }
 
-int psp_v3_1_cmd_submit(struct psp_context *psp,
-		        struct amdgpu_firmware_info *ucode,
-		        uint64_t cmd_buf_mc_addr, uint64_t fence_mc_addr,
-		        int index)
+static int psp_v3_1_ring_stop(struct psp_context *psp,
+			      enum psp_ring_type ring_type)
+{
+	int ret = 0;
+	struct psp_ring *ring;
+	unsigned int psp_ring_reg = 0;
+	struct amdgpu_device *adev = psp->adev;
+
+	ring = &psp->km_ring;
+
+	/* Write the ring destroy command to C2PMSG_64 */
+	psp_ring_reg = 3 << 16;
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_64, psp_ring_reg);
+
+	/* there might be handshake issue with hardware which needs delay */
+	mdelay(20);
+
+	/* Wait for response flag (bit 31) in C2PMSG_64 */
+	ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_64),
+			   0x80000000, 0x80000000, false);
+
+	return ret;
+}
+
+static int psp_v3_1_ring_destroy(struct psp_context *psp,
+				 enum psp_ring_type ring_type)
+{
+	int ret = 0;
+	struct psp_ring *ring = &psp->km_ring;
+	struct amdgpu_device *adev = psp->adev;
+
+	ret = psp_v3_1_ring_stop(psp, ring_type);
+	if (ret)
+		DRM_ERROR("Fail to stop psp ring\n");
+
+	amdgpu_bo_free_kernel(&adev->firmware.rbuf,
+			      &ring->ring_mem_mc_addr,
+			      (void **)&ring->ring_mem);
+
+	return ret;
+}
+
+static int psp_v3_1_cmd_submit(struct psp_context *psp,
+			       struct amdgpu_firmware_info *ucode,
+			       uint64_t cmd_buf_mc_addr, uint64_t fence_mc_addr,
+			       int index)
 {
 	unsigned int psp_write_ptr_reg = 0;
 	struct psp_gfx_rb_frame * write_frame = psp->km_ring.ring_mem;
 	struct psp_ring *ring = &psp->km_ring;
+	struct psp_gfx_rb_frame *ring_buffer_start = ring->ring_mem;
+	struct psp_gfx_rb_frame *ring_buffer_end = ring_buffer_start +
+		ring->ring_size / sizeof(struct psp_gfx_rb_frame) - 1;
 	struct amdgpu_device *adev = psp->adev;
 	uint32_t ring_size_dw = ring->ring_size / 4;
 	uint32_t rb_frame_size_dw = sizeof(struct psp_gfx_rb_frame) / 4;
 
 	/* KM (GPCOM) prepare write pointer */
-	psp_write_ptr_reg = RREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_67));
+	psp_write_ptr_reg = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_67);
 
 	/* Update KM RB frame pointer to new frame */
 	/* write_frame ptr increments by size of rb_frame in bytes */
 	/* psp_write_ptr_reg increments by size of rb_frame in DWORDs */
 	if ((psp_write_ptr_reg % ring_size_dw) == 0)
-		write_frame = ring->ring_mem;
+		write_frame = ring_buffer_start;
 	else
-		write_frame = ring->ring_mem + (psp_write_ptr_reg / rb_frame_size_dw);
+		write_frame = ring_buffer_start + (psp_write_ptr_reg / rb_frame_size_dw);
+	/* Check invalid write_frame ptr address */
+	if ((write_frame < ring_buffer_start) || (ring_buffer_end < write_frame)) {
+		DRM_ERROR("ring_buffer_start = %p; ring_buffer_end = %p; write_frame = %p\n",
+			  ring_buffer_start, ring_buffer_end, write_frame);
+		DRM_ERROR("write_frame is pointing to address out of bounds\n");
+		return -EINVAL;
+	}
 
 	/* Initialize KM RB frame */
 	memset(write_frame, 0, sizeof(struct psp_gfx_rb_frame));
 
 	/* Update KM RB frame */
-	write_frame->cmd_buf_addr_hi = (unsigned int)(cmd_buf_mc_addr >> 32);
-	write_frame->cmd_buf_addr_lo = (unsigned int)(cmd_buf_mc_addr);
-	write_frame->fence_addr_hi = (unsigned int)(fence_mc_addr >> 32);
-	write_frame->fence_addr_lo = (unsigned int)(fence_mc_addr);
+	write_frame->cmd_buf_addr_hi = upper_32_bits(cmd_buf_mc_addr);
+	write_frame->cmd_buf_addr_lo = lower_32_bits(cmd_buf_mc_addr);
+	write_frame->fence_addr_hi = upper_32_bits(fence_mc_addr);
+	write_frame->fence_addr_lo = lower_32_bits(fence_mc_addr);
 	write_frame->fence_value = index;
 
 	/* Update the write Pointer in DWORDs */
 	psp_write_ptr_reg = (psp_write_ptr_reg + rb_frame_size_dw) % ring_size_dw;
-	WREG32(SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_67), psp_write_ptr_reg);
+	WREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_67, psp_write_ptr_reg);
 
 	return 0;
 }
 
 static int
-psp_v3_1_sram_map(unsigned int *sram_offset, unsigned int *sram_addr_reg_offset,
+psp_v3_1_sram_map(struct amdgpu_device *adev,
+		  unsigned int *sram_offset, unsigned int *sram_addr_reg_offset,
 		  unsigned int *sram_data_reg_offset,
 		  enum AMDGPU_UCODE_ID ucode_id)
 {
@@ -470,9 +505,9 @@ psp_v3_1_sram_map(unsigned int *sram_offset, unsigned int *sram_addr_reg_offset,
 	return ret;
 }
 
-bool psp_v3_1_compare_sram_data(struct psp_context *psp,
-				struct amdgpu_firmware_info *ucode,
-				enum AMDGPU_UCODE_ID ucode_type)
+static bool psp_v3_1_compare_sram_data(struct psp_context *psp,
+				       struct amdgpu_firmware_info *ucode,
+				       enum AMDGPU_UCODE_ID ucode_type)
 {
 	int err = 0;
 	unsigned int fw_sram_reg_val = 0;
@@ -482,7 +517,7 @@ bool psp_v3_1_compare_sram_data(struct psp_context *psp,
 	uint32_t *ucode_mem = NULL;
 	struct amdgpu_device *adev = psp->adev;
 
-	err = psp_v3_1_sram_map(&fw_sram_reg_val, &fw_sram_addr_reg_offset,
+	err = psp_v3_1_sram_map(adev, &fw_sram_reg_val, &fw_sram_addr_reg_offset,
 				&fw_sram_data_reg_offset, ucode_type);
 	if (err)
 		return false;
@@ -505,13 +540,67 @@ bool psp_v3_1_compare_sram_data(struct psp_context *psp,
 	return true;
 }
 
-bool psp_v3_1_smu_reload_quirk(struct psp_context *psp)
+static bool psp_v3_1_smu_reload_quirk(struct psp_context *psp)
 {
 	struct amdgpu_device *adev = psp->adev;
 	uint32_t reg;
 
 	reg = smnMP1_FIRMWARE_FLAGS | 0x03b00000;
-	WREG32(SOC15_REG_OFFSET(NBIO, 0, mmPCIE_INDEX2), reg);
-	reg = RREG32(SOC15_REG_OFFSET(NBIO, 0, mmPCIE_DATA2));
+	WREG32_SOC15(NBIO, 0, mmPCIE_INDEX2, reg);
+	reg = RREG32_SOC15(NBIO, 0, mmPCIE_DATA2);
 	return (reg & MP1_FIRMWARE_FLAGS__INTERRUPTS_ENABLED_MASK) ? true : false;
+}
+
+static int psp_v3_1_mode1_reset(struct psp_context *psp)
+{
+	int ret;
+	uint32_t offset;
+	struct amdgpu_device *adev = psp->adev;
+
+	offset = SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_64);
+
+	ret = psp_wait_for(psp, offset, 0x80000000, 0x8000FFFF, false);
+
+	if (ret) {
+		DRM_INFO("psp is not working correctly before mode1 reset!\n");
+		return -EINVAL;
+	}
+
+	/*send the mode 1 reset command*/
+	WREG32(offset, 0x70000);
+
+	mdelay(1000);
+
+	offset = SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_33);
+
+	ret = psp_wait_for(psp, offset, 0x80000000, 0x80000000, false);
+
+	if (ret) {
+		DRM_INFO("psp mode 1 reset failed!\n");
+		return -EINVAL;
+	}
+
+	DRM_INFO("psp mode1 reset succeed \n");
+
+	return 0;
+}
+
+static const struct psp_funcs psp_v3_1_funcs = {
+	.init_microcode = psp_v3_1_init_microcode,
+	.bootloader_load_sysdrv = psp_v3_1_bootloader_load_sysdrv,
+	.bootloader_load_sos = psp_v3_1_bootloader_load_sos,
+	.prep_cmd_buf = psp_v3_1_prep_cmd_buf,
+	.ring_init = psp_v3_1_ring_init,
+	.ring_create = psp_v3_1_ring_create,
+	.ring_stop = psp_v3_1_ring_stop,
+	.ring_destroy = psp_v3_1_ring_destroy,
+	.cmd_submit = psp_v3_1_cmd_submit,
+	.compare_sram_data = psp_v3_1_compare_sram_data,
+	.smu_reload_quirk = psp_v3_1_smu_reload_quirk,
+	.mode1_reset = psp_v3_1_mode1_reset,
+};
+
+void psp_v3_1_set_psp_funcs(struct psp_context *psp)
+{
+	psp->funcs = &psp_v3_1_funcs;
 }

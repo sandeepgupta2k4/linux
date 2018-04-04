@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  *
@@ -45,7 +46,7 @@ ksocknal_alloc_tx(int type, int size)
 	}
 
 	if (!tx)
-		LIBCFS_ALLOC(tx, size);
+		tx = kzalloc(size, GFP_NOFS);
 
 	if (!tx)
 		return NULL;
@@ -101,7 +102,7 @@ ksocknal_free_tx(struct ksock_tx *tx)
 
 		spin_unlock(&ksocknal_data.ksnd_tx_lock);
 	} else {
-		LIBCFS_FREE(tx, tx->tx_desc_size);
+		kfree(tx);
 	}
 }
 
@@ -145,7 +146,7 @@ ksocknal_send_iov(struct ksock_conn *conn, struct ksock_tx *tx)
 static int
 ksocknal_send_kiov(struct ksock_conn *conn, struct ksock_tx *tx)
 {
-	lnet_kiov_t *kiov = tx->tx_kiov;
+	struct bio_vec *kiov = tx->tx_kiov;
 	int nob;
 	int rc;
 
@@ -249,19 +250,16 @@ ksocknal_transmit(struct ksock_conn *conn, struct ksock_tx *tx)
 }
 
 static int
-ksocknal_recv_iov(struct ksock_conn *conn)
+ksocknal_recv_iter(struct ksock_conn *conn)
 {
-	struct kvec *iov = conn->ksnc_rx_iov;
 	int nob;
 	int rc;
 
-	LASSERT(conn->ksnc_rx_niov > 0);
-
 	/*
-	 * Never touch conn->ksnc_rx_iov or change connection
-	 * status inside ksocknal_lib_recv_iov
+	 * Never touch conn->ksnc_rx_to or change connection
+	 * status inside ksocknal_lib_recv
 	 */
-	rc = ksocknal_lib_recv_iov(conn);
+	rc = ksocknal_lib_recv(conn);
 
 	if (rc <= 0)
 		return rc;
@@ -275,69 +273,11 @@ ksocknal_recv_iov(struct ksock_conn *conn)
 	mb();		       /* order with setting rx_started */
 	conn->ksnc_rx_started = 1;
 
-	conn->ksnc_rx_nob_wanted -= nob;
 	conn->ksnc_rx_nob_left -= nob;
 
-	do {
-		LASSERT(conn->ksnc_rx_niov > 0);
-
-		if (nob < (int)iov->iov_len) {
-			iov->iov_len -= nob;
-			iov->iov_base += nob;
-			return -EAGAIN;
-		}
-
-		nob -= iov->iov_len;
-		conn->ksnc_rx_iov = ++iov;
-		conn->ksnc_rx_niov--;
-	} while (nob);
-
-	return rc;
-}
-
-static int
-ksocknal_recv_kiov(struct ksock_conn *conn)
-{
-	lnet_kiov_t *kiov = conn->ksnc_rx_kiov;
-	int nob;
-	int rc;
-
-	LASSERT(conn->ksnc_rx_nkiov > 0);
-
-	/*
-	 * Never touch conn->ksnc_rx_kiov or change connection
-	 * status inside ksocknal_lib_recv_iov
-	 */
-	rc = ksocknal_lib_recv_kiov(conn);
-
-	if (rc <= 0)
-		return rc;
-
-	/* received something... */
-	nob = rc;
-
-	conn->ksnc_peer->ksnp_last_alive = cfs_time_current();
-	conn->ksnc_rx_deadline =
-		cfs_time_shift(*ksocknal_tunables.ksnd_timeout);
-	mb();		       /* order with setting rx_started */
-	conn->ksnc_rx_started = 1;
-
-	conn->ksnc_rx_nob_wanted -= nob;
-	conn->ksnc_rx_nob_left -= nob;
-
-	do {
-		LASSERT(conn->ksnc_rx_nkiov > 0);
-
-		if (nob < (int)kiov->bv_len) {
-			kiov->bv_offset += nob;
-			kiov->bv_len -= nob;
-			return -EAGAIN;
-		}
-
-		nob -= kiov->bv_len;
-		conn->ksnc_rx_kiov = ++kiov;
-		conn->ksnc_rx_nkiov--;
-	} while (nob);
+	iov_iter_advance(&conn->ksnc_rx_to, nob);
+	if (iov_iter_count(&conn->ksnc_rx_to))
+		return -EAGAIN;
 
 	return 1;
 }
@@ -347,7 +287,7 @@ ksocknal_receive(struct ksock_conn *conn)
 {
 	/*
 	 * Return 1 on success, 0 on EOF, < 0 on error.
-	 * Caller checks ksnc_rx_nob_wanted to determine
+	 * Caller checks ksnc_rx_to to determine
 	 * progress/completion.
 	 */
 	int rc;
@@ -364,11 +304,7 @@ ksocknal_receive(struct ksock_conn *conn)
 	}
 
 	for (;;) {
-		if (conn->ksnc_rx_niov)
-			rc = ksocknal_recv_iov(conn);
-		else
-			rc = ksocknal_recv_kiov(conn);
-
+		rc = ksocknal_recv_iter(conn);
 		if (rc <= 0) {
 			/* error/EOF or partial receive */
 			if (rc == -EAGAIN) {
@@ -382,7 +318,7 @@ ksocknal_receive(struct ksock_conn *conn)
 
 		/* Completed a fragment */
 
-		if (!conn->ksnc_rx_nob_wanted) {
+		if (!iov_iter_count(&conn->ksnc_rx_to)) {
 			rc = 1;
 			break;
 		}
@@ -393,9 +329,9 @@ ksocknal_receive(struct ksock_conn *conn)
 }
 
 void
-ksocknal_tx_done(lnet_ni_t *ni, struct ksock_tx *tx)
+ksocknal_tx_done(struct lnet_ni *ni, struct ksock_tx *tx)
 {
-	lnet_msg_t *lnetmsg = tx->tx_lnetmsg;
+	struct lnet_msg *lnetmsg = tx->tx_lnetmsg;
 	int rc = (!tx->tx_resid && !tx->tx_zc_aborted) ? 0 : -EIO;
 
 	LASSERT(ni || tx->tx_conn);
@@ -412,7 +348,7 @@ ksocknal_tx_done(lnet_ni_t *ni, struct ksock_tx *tx)
 }
 
 void
-ksocknal_txlist_done(lnet_ni_t *ni, struct list_head *txlist, int error)
+ksocknal_txlist_done(struct lnet_ni *ni, struct list_head *txlist, int error)
 {
 	struct ksock_tx *tx;
 
@@ -695,7 +631,7 @@ void
 ksocknal_queue_tx_locked(struct ksock_tx *tx, struct ksock_conn *conn)
 {
 	struct ksock_sched *sched = conn->ksnc_scheduler;
-	ksock_msg_t *msg = &tx->tx_msg;
+	struct ksock_msg *msg = &tx->tx_msg;
 	struct ksock_tx *ztx = NULL;
 	int bufnob = 0;
 
@@ -845,7 +781,8 @@ ksocknal_find_connecting_route_locked(struct ksock_peer *peer)
 }
 
 int
-ksocknal_launch_packet(lnet_ni_t *ni, struct ksock_tx *tx, lnet_process_id_t id)
+ksocknal_launch_packet(struct lnet_ni *ni, struct ksock_tx *tx,
+		       struct lnet_process_id id)
 {
 	struct ksock_peer *peer;
 	struct ksock_conn *conn;
@@ -938,14 +875,14 @@ ksocknal_launch_packet(lnet_ni_t *ni, struct ksock_tx *tx, lnet_process_id_t id)
 }
 
 int
-ksocknal_send(lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
+ksocknal_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 {
 	int mpflag = 1;
 	int type = lntmsg->msg_type;
-	lnet_process_id_t target = lntmsg->msg_target;
+	struct lnet_process_id target = lntmsg->msg_target;
 	unsigned int payload_niov = lntmsg->msg_niov;
 	struct kvec *payload_iov = lntmsg->msg_iov;
-	lnet_kiov_t *payload_kiov = lntmsg->msg_kiov;
+	struct bio_vec *payload_kiov = lntmsg->msg_kiov;
 	unsigned int payload_offset = lntmsg->msg_offset;
 	unsigned int payload_nob = lntmsg->msg_len;
 	struct ksock_tx *tx;
@@ -1049,6 +986,7 @@ int
 ksocknal_new_packet(struct ksock_conn *conn, int nob_to_skip)
 {
 	static char ksocknal_slop_buffer[4096];
+	struct kvec *kvec = (struct kvec *)&conn->ksnc_rx_iov_space;
 
 	int nob;
 	unsigned int niov;
@@ -1069,32 +1007,26 @@ ksocknal_new_packet(struct ksock_conn *conn, int nob_to_skip)
 		case  KSOCK_PROTO_V2:
 		case  KSOCK_PROTO_V3:
 			conn->ksnc_rx_state = SOCKNAL_RX_KSM_HEADER;
-			conn->ksnc_rx_iov = (struct kvec *)&conn->ksnc_rx_iov_space;
-			conn->ksnc_rx_iov[0].iov_base = &conn->ksnc_msg;
-
-			conn->ksnc_rx_nob_wanted = offsetof(ksock_msg_t, ksm_u);
-			conn->ksnc_rx_nob_left = offsetof(ksock_msg_t, ksm_u);
-			conn->ksnc_rx_iov[0].iov_len  = offsetof(ksock_msg_t, ksm_u);
+			kvec->iov_base = &conn->ksnc_msg;
+			kvec->iov_len = offsetof(struct ksock_msg, ksm_u);
+			conn->ksnc_rx_nob_left = offsetof(struct ksock_msg, ksm_u);
+			iov_iter_kvec(&conn->ksnc_rx_to, READ|ITER_KVEC, kvec,
+					1, offsetof(struct ksock_msg, ksm_u));
 			break;
 
 		case KSOCK_PROTO_V1:
 			/* Receiving bare struct lnet_hdr */
 			conn->ksnc_rx_state = SOCKNAL_RX_LNET_HEADER;
-			conn->ksnc_rx_nob_wanted = sizeof(struct lnet_hdr);
+			kvec->iov_base = &conn->ksnc_msg.ksm_u.lnetmsg;
+			kvec->iov_len = sizeof(struct lnet_hdr);
 			conn->ksnc_rx_nob_left = sizeof(struct lnet_hdr);
-
-			conn->ksnc_rx_iov = (struct kvec *)&conn->ksnc_rx_iov_space;
-			conn->ksnc_rx_iov[0].iov_base = &conn->ksnc_msg.ksm_u.lnetmsg;
-			conn->ksnc_rx_iov[0].iov_len = sizeof(struct lnet_hdr);
+			iov_iter_kvec(&conn->ksnc_rx_to, READ|ITER_KVEC, kvec,
+					1, sizeof(struct lnet_hdr));
 			break;
 
 		default:
 			LBUG();
 		}
-		conn->ksnc_rx_niov = 1;
-
-		conn->ksnc_rx_kiov = NULL;
-		conn->ksnc_rx_nkiov = 0;
 		conn->ksnc_rx_csum = ~0;
 		return 1;
 	}
@@ -1105,15 +1037,14 @@ ksocknal_new_packet(struct ksock_conn *conn, int nob_to_skip)
 	 */
 	conn->ksnc_rx_state = SOCKNAL_RX_SLOP;
 	conn->ksnc_rx_nob_left = nob_to_skip;
-	conn->ksnc_rx_iov = (struct kvec *)&conn->ksnc_rx_iov_space;
 	skipped = 0;
 	niov = 0;
 
 	do {
 		nob = min_t(int, nob_to_skip, sizeof(ksocknal_slop_buffer));
 
-		conn->ksnc_rx_iov[niov].iov_base = ksocknal_slop_buffer;
-		conn->ksnc_rx_iov[niov].iov_len  = nob;
+		kvec[niov].iov_base = ksocknal_slop_buffer;
+		kvec[niov].iov_len  = nob;
 		niov++;
 		skipped += nob;
 		nob_to_skip -= nob;
@@ -1121,18 +1052,16 @@ ksocknal_new_packet(struct ksock_conn *conn, int nob_to_skip)
 	} while (nob_to_skip &&    /* mustn't overflow conn's rx iov */
 		 niov < sizeof(conn->ksnc_rx_iov_space) / sizeof(struct iovec));
 
-	conn->ksnc_rx_niov = niov;
-	conn->ksnc_rx_kiov = NULL;
-	conn->ksnc_rx_nkiov = 0;
-	conn->ksnc_rx_nob_wanted = skipped;
+	iov_iter_kvec(&conn->ksnc_rx_to, READ|ITER_KVEC, kvec, niov, skipped);
 	return 0;
 }
 
 static int
 ksocknal_process_receive(struct ksock_conn *conn)
 {
+	struct kvec *kvec = (struct kvec *)&conn->ksnc_rx_iov_space;
 	struct lnet_hdr *lhdr;
-	lnet_process_id_t *id;
+	struct lnet_process_id *id;
 	int rc;
 
 	LASSERT(atomic_read(&conn->ksnc_conn_refcount) > 0);
@@ -1144,7 +1073,7 @@ ksocknal_process_receive(struct ksock_conn *conn)
 		conn->ksnc_rx_state == SOCKNAL_RX_LNET_HEADER ||
 		conn->ksnc_rx_state == SOCKNAL_RX_SLOP);
  again:
-	if (conn->ksnc_rx_nob_wanted) {
+	if (iov_iter_count(&conn->ksnc_rx_to)) {
 		rc = ksocknal_receive(conn);
 
 		if (rc <= 0) {
@@ -1169,7 +1098,7 @@ ksocknal_process_receive(struct ksock_conn *conn)
 			return (!rc ? -ESHUTDOWN : rc);
 		}
 
-		if (conn->ksnc_rx_nob_wanted) {
+		if (iov_iter_count(&conn->ksnc_rx_to)) {
 			/* short read */
 			return -EAGAIN;
 		}
@@ -1232,16 +1161,13 @@ ksocknal_process_receive(struct ksock_conn *conn)
 		}
 
 		conn->ksnc_rx_state = SOCKNAL_RX_LNET_HEADER;
-		conn->ksnc_rx_nob_wanted = sizeof(ksock_lnet_msg_t);
-		conn->ksnc_rx_nob_left = sizeof(ksock_lnet_msg_t);
+		conn->ksnc_rx_nob_left = sizeof(struct ksock_lnet_msg);
 
-		conn->ksnc_rx_iov = (struct kvec *)&conn->ksnc_rx_iov_space;
-		conn->ksnc_rx_iov[0].iov_base = &conn->ksnc_msg.ksm_u.lnetmsg;
-		conn->ksnc_rx_iov[0].iov_len  = sizeof(ksock_lnet_msg_t);
+		kvec->iov_base = &conn->ksnc_msg.ksm_u.lnetmsg;
+		kvec->iov_len = sizeof(struct ksock_lnet_msg);
 
-		conn->ksnc_rx_niov = 1;
-		conn->ksnc_rx_kiov = NULL;
-		conn->ksnc_rx_nkiov = 0;
+		iov_iter_kvec(&conn->ksnc_rx_to, READ|ITER_KVEC, kvec,
+				1, sizeof(struct ksock_lnet_msg));
 
 		goto again;     /* read lnet header now */
 
@@ -1333,8 +1259,8 @@ ksocknal_process_receive(struct ksock_conn *conn)
 }
 
 int
-ksocknal_recv(lnet_ni_t *ni, void *private, lnet_msg_t *msg, int delayed,
-	      struct iov_iter *to, unsigned int rlen)
+ksocknal_recv(struct lnet_ni *ni, void *private, struct lnet_msg *msg,
+	      int delayed, struct iov_iter *to, unsigned int rlen)
 {
 	struct ksock_conn *conn = private;
 	struct ksock_sched *sched = conn->ksnc_scheduler;
@@ -1343,26 +1269,9 @@ ksocknal_recv(lnet_ni_t *ni, void *private, lnet_msg_t *msg, int delayed,
 	LASSERT(to->nr_segs <= LNET_MAX_IOV);
 
 	conn->ksnc_cookie = msg;
-	conn->ksnc_rx_nob_wanted = iov_iter_count(to);
 	conn->ksnc_rx_nob_left = rlen;
 
-	if (to->type & ITER_KVEC) {
-		conn->ksnc_rx_nkiov = 0;
-		conn->ksnc_rx_kiov = NULL;
-		conn->ksnc_rx_iov = conn->ksnc_rx_iov_space.iov;
-		conn->ksnc_rx_niov =
-			lnet_extract_iov(LNET_MAX_IOV, conn->ksnc_rx_iov,
-					 to->nr_segs, to->kvec,
-					 to->iov_offset, iov_iter_count(to));
-	} else {
-		conn->ksnc_rx_niov = 0;
-		conn->ksnc_rx_iov = NULL;
-		conn->ksnc_rx_kiov = conn->ksnc_rx_iov_space.kiov;
-		conn->ksnc_rx_nkiov =
-			lnet_extract_kiov(LNET_MAX_IOV, conn->ksnc_rx_kiov,
-					 to->nr_segs, to->bvec,
-					 to->iov_offset, iov_iter_count(to));
-	}
+	conn->ksnc_rx_to = *to;
 
 	LASSERT(conn->ksnc_rx_scheduled);
 
@@ -1633,7 +1542,7 @@ void ksocknal_write_callback(struct ksock_conn *conn)
 }
 
 static struct ksock_proto *
-ksocknal_parse_proto_version(ksock_hello_msg_t *hello)
+ksocknal_parse_proto_version(struct ksock_hello_msg *hello)
 {
 	__u32 version = 0;
 
@@ -1664,7 +1573,7 @@ ksocknal_parse_proto_version(ksock_hello_msg_t *hello)
 		struct lnet_magicversion *hmv = (struct lnet_magicversion *)hello;
 
 		BUILD_BUG_ON(sizeof(struct lnet_magicversion) !=
-			 offsetof(ksock_hello_msg_t, kshm_src_nid));
+			     offsetof(struct ksock_hello_msg, kshm_src_nid));
 
 		if (hmv->version_major == cpu_to_le16(KSOCK_PROTO_V1_MAJOR) &&
 		    hmv->version_minor == cpu_to_le16(KSOCK_PROTO_V1_MINOR))
@@ -1675,8 +1584,8 @@ ksocknal_parse_proto_version(ksock_hello_msg_t *hello)
 }
 
 int
-ksocknal_send_hello(lnet_ni_t *ni, struct ksock_conn *conn,
-		    lnet_nid_t peer_nid, ksock_hello_msg_t *hello)
+ksocknal_send_hello(struct lnet_ni *ni, struct ksock_conn *conn,
+		    lnet_nid_t peer_nid, struct ksock_hello_msg *hello)
 {
 	/* CAVEAT EMPTOR: this byte flips 'ipaddrs' */
 	struct ksock_net *net = (struct ksock_net *)ni->ni_data;
@@ -1713,8 +1622,9 @@ ksocknal_invert_type(int type)
 }
 
 int
-ksocknal_recv_hello(lnet_ni_t *ni, struct ksock_conn *conn,
-		    ksock_hello_msg_t *hello, lnet_process_id_t *peerid,
+ksocknal_recv_hello(struct lnet_ni *ni, struct ksock_conn *conn,
+		    struct ksock_hello_msg *hello,
+		    struct lnet_process_id *peerid,
 		    __u64 *incarnation)
 {
 	/* Return < 0	fatal error
@@ -1728,7 +1638,7 @@ ksocknal_recv_hello(lnet_ni_t *ni, struct ksock_conn *conn,
 	int proto_match;
 	int rc;
 	struct ksock_proto *proto;
-	lnet_process_id_t recv_id;
+	struct lnet_process_id recv_id;
 
 	/* socket type set on active connections - not set on passive */
 	LASSERT(!active == !(conn->ksnc_type != SOCKLND_CONN_NONE));
@@ -1904,14 +1814,14 @@ ksocknal_connect(struct ksock_route *route)
 		if (retry_later) /* needs reschedule */
 			break;
 
-		if (wanted & (1 << SOCKLND_CONN_ANY)) {
+		if (wanted & BIT(SOCKLND_CONN_ANY)) {
 			type = SOCKLND_CONN_ANY;
-		} else if (wanted & (1 << SOCKLND_CONN_CONTROL)) {
+		} else if (wanted & BIT(SOCKLND_CONN_CONTROL)) {
 			type = SOCKLND_CONN_CONTROL;
-		} else if (wanted & (1 << SOCKLND_CONN_BULK_IN)) {
+		} else if (wanted & BIT(SOCKLND_CONN_BULK_IN)) {
 			type = SOCKLND_CONN_BULK_IN;
 		} else {
-			LASSERT(wanted & (1 << SOCKLND_CONN_BULK_OUT));
+			LASSERT(wanted & BIT(SOCKLND_CONN_BULK_OUT));
 			type = SOCKLND_CONN_BULK_OUT;
 		}
 
@@ -2164,7 +2074,7 @@ ksocknal_connd(void *arg)
 {
 	spinlock_t *connd_lock = &ksocknal_data.ksnd_connd_lock;
 	struct ksock_connreq *cr;
-	wait_queue_t wait;
+	wait_queue_entry_t wait;
 	int nloops = 0;
 	int cons_retry = 0;
 
@@ -2207,7 +2117,7 @@ ksocknal_connd(void *arg)
 			ksocknal_create_conn(cr->ksncr_ni, NULL,
 					     cr->ksncr_sock, SOCKLND_CONN_NONE);
 			lnet_ni_decref(cr->ksncr_ni);
-			LIBCFS_FREE(cr, sizeof(*cr));
+			kfree(cr);
 
 			spin_lock_bh(connd_lock);
 		}
@@ -2326,12 +2236,12 @@ ksocknal_find_timed_out_conn(struct ksock_peer *peer)
 				     conn->ksnc_rx_deadline)) {
 			/* Timed out incomplete incoming message */
 			ksocknal_conn_addref(conn);
-			CNETERR("Timeout receiving from %s (%pI4h:%d), state %d wanted %d left %d\n",
+			CNETERR("Timeout receiving from %s (%pI4h:%d), state %d wanted %zd left %d\n",
 				libcfs_id2str(peer->ksnp_id),
 				&conn->ksnc_ipaddr,
 				conn->ksnc_port,
 				conn->ksnc_rx_state,
-				conn->ksnc_rx_nob_wanted,
+				iov_iter_count(&conn->ksnc_rx_to),
 				conn->ksnc_rx_nob_left);
 			return conn;
 		}
@@ -2552,7 +2462,7 @@ ksocknal_check_peer_timeouts(int idx)
 int
 ksocknal_reaper(void *arg)
 {
-	wait_queue_t wait;
+	wait_queue_entry_t wait;
 	struct ksock_conn *conn;
 	struct ksock_sched *sched;
 	struct list_head enomem_conns;

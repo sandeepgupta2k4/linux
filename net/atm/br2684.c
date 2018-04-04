@@ -252,7 +252,7 @@ static int br2684_xmit_vcc(struct sk_buff *skb, struct net_device *dev,
 
 	ATM_SKB(skb)->vcc = atmvcc = brvcc->atmvcc;
 	pr_debug("atm_skb(%p)->vcc(%p)->dev(%p)\n", skb, atmvcc, atmvcc->dev);
-	atomic_add(skb->truesize, &sk_atm(atmvcc)->sk_wmem_alloc);
+	refcount_add(skb->truesize, &sk_atm(atmvcc)->sk_wmem_alloc);
 	ATM_SKB(skb)->atm_options = atmvcc->atm_options;
 	dev->stats.tx_packets++;
 	dev->stats.tx_bytes += skb->len;
@@ -824,7 +824,6 @@ static int br2684_proc_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations br2684_proc_ops = {
-	.owner = THIS_MODULE,
 	.open = br2684_proc_open,
 	.read = seq_read,
 	.llseek = seq_lseek,

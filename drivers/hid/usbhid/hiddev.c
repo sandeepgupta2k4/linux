@@ -237,8 +237,8 @@ static int hiddev_release(struct inode * inode, struct file * file)
 	mutex_lock(&list->hiddev->existancelock);
 	if (!--list->hiddev->open) {
 		if (list->hiddev->exist) {
-			usbhid_close(list->hiddev->hid);
-			usbhid_put_power(list->hiddev->hid);
+			hid_hw_close(list->hiddev->hid);
+			hid_hw_power(list->hiddev->hid, PM_HINT_NORMAL);
 		} else {
 			mutex_unlock(&list->hiddev->existancelock);
 			kfree(list->hiddev);
@@ -282,11 +282,9 @@ static int hiddev_open(struct inode *inode, struct file *file)
 	 */
 	if (list->hiddev->exist) {
 		if (!list->hiddev->open++) {
-			res = usbhid_open(hiddev->hid);
-			if (res < 0) {
-				res = -EIO;
+			res = hid_hw_open(hiddev->hid);
+			if (res < 0)
 				goto bail;
-			}
 		}
 	} else {
 		res = -ENODEV;
@@ -301,15 +299,17 @@ static int hiddev_open(struct inode *inode, struct file *file)
 	if (!list->hiddev->open++)
 		if (list->hiddev->exist) {
 			struct hid_device *hid = hiddev->hid;
-			res = usbhid_get_power(hid);
-			if (res < 0) {
-				res = -EIO;
+			res = hid_hw_power(hid, PM_HINT_FULLON);
+			if (res < 0)
 				goto bail_unlock;
-			}
-			usbhid_open(hid);
+			res = hid_hw_open(hid);
+			if (res < 0)
+				goto bail_normal_power;
 		}
 	mutex_unlock(&hiddev->existancelock);
 	return 0;
+bail_normal_power:
+	hid_hw_power(hid, PM_HINT_NORMAL);
 bail_unlock:
 	mutex_unlock(&hiddev->existancelock);
 bail:
@@ -422,15 +422,15 @@ static ssize_t hiddev_read(struct file * file, char __user * buffer, size_t coun
  * "poll" file op
  * No kernel lock - fine
  */
-static unsigned int hiddev_poll(struct file *file, poll_table *wait)
+static __poll_t hiddev_poll(struct file *file, poll_table *wait)
 {
 	struct hiddev_list *list = file->private_data;
 
 	poll_wait(file, &list->hiddev->wait, wait);
 	if (list->head != list->tail)
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	if (!list->hiddev->exist)
-		return POLLERR | POLLHUP;
+		return EPOLLERR | EPOLLHUP;
 	return 0;
 }
 
@@ -935,7 +935,7 @@ void hiddev_disconnect(struct hid_device *hid)
 
 	if (hiddev->open) {
 		mutex_unlock(&hiddev->existancelock);
-		usbhid_close(hiddev->hid);
+		hid_hw_close(hiddev->hid);
 		wake_up_interruptible(&hiddev->wait);
 	} else {
 		mutex_unlock(&hiddev->existancelock);

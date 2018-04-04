@@ -17,6 +17,7 @@
 #include <drm/drm_crtc.h>
 
 #include <linux/kernel.h>
+#include <linux/list.h>
 #include <linux/reset.h>
 
 #define SUN4I_TCON_GCTL_REG			0x0
@@ -36,6 +37,7 @@
 #define SUN4I_TCON0_CTL_TCON_ENABLE			BIT(31)
 #define SUN4I_TCON0_CTL_CLK_DELAY_MASK			GENMASK(8, 4)
 #define SUN4I_TCON0_CTL_CLK_DELAY(delay)		((delay << 4) & SUN4I_TCON0_CTL_CLK_DELAY_MASK)
+#define SUN4I_TCON0_CTL_SRC_SEL_MASK			GENMASK(2, 0)
 
 #define SUN4I_TCON0_DCLK_REG			0x44
 #define SUN4I_TCON0_DCLK_GATE_BIT			(31)
@@ -51,7 +53,7 @@
 #define SUN4I_TCON0_BASIC1_H_BACKPORCH(bp)		(((bp) - 1) & 0xfff)
 
 #define SUN4I_TCON0_BASIC2_REG			0x50
-#define SUN4I_TCON0_BASIC2_V_TOTAL(total)		((((total) * 2) & 0x1fff) << 16)
+#define SUN4I_TCON0_BASIC2_V_TOTAL(total)		(((total) & 0x1fff) << 16)
 #define SUN4I_TCON0_BASIC2_V_BACKPORCH(bp)		(((bp) - 1) & 0xfff)
 
 #define SUN4I_TCON0_BASIC3_REG			0x54
@@ -68,7 +70,21 @@
 #define SUN4I_TCON0_TTL2_REG			0x78
 #define SUN4I_TCON0_TTL3_REG			0x7c
 #define SUN4I_TCON0_TTL4_REG			0x80
+
 #define SUN4I_TCON0_LVDS_IF_REG			0x84
+#define SUN4I_TCON0_LVDS_IF_EN				BIT(31)
+#define SUN4I_TCON0_LVDS_IF_BITWIDTH_MASK		BIT(26)
+#define SUN4I_TCON0_LVDS_IF_BITWIDTH_18BITS		(1 << 26)
+#define SUN4I_TCON0_LVDS_IF_BITWIDTH_24BITS		(0 << 26)
+#define SUN4I_TCON0_LVDS_IF_CLK_SEL_MASK		BIT(20)
+#define SUN4I_TCON0_LVDS_IF_CLK_SEL_TCON0		(1 << 20)
+#define SUN4I_TCON0_LVDS_IF_CLK_POL_MASK		BIT(4)
+#define SUN4I_TCON0_LVDS_IF_CLK_POL_NORMAL		(1 << 4)
+#define SUN4I_TCON0_LVDS_IF_CLK_POL_INV			(0 << 4)
+#define SUN4I_TCON0_LVDS_IF_DATA_POL_MASK		GENMASK(3, 0)
+#define SUN4I_TCON0_LVDS_IF_DATA_POL_NORMAL		(0xf)
+#define SUN4I_TCON0_LVDS_IF_DATA_POL_INV		(0)
+
 #define SUN4I_TCON0_IO_POL_REG			0x88
 #define SUN4I_TCON0_IO_POL_DCLK_PHASE(phase)		((phase & 3) << 28)
 #define SUN4I_TCON0_IO_POL_HSYNC_POSITIVE		BIT(25)
@@ -84,6 +100,7 @@
 #define SUN4I_TCON1_CTL_INTERLACE_ENABLE		BIT(20)
 #define SUN4I_TCON1_CTL_CLK_DELAY_MASK			GENMASK(8, 4)
 #define SUN4I_TCON1_CTL_CLK_DELAY(delay)		((delay << 4) & SUN4I_TCON1_CTL_CLK_DELAY_MASK)
+#define SUN4I_TCON1_CTL_SRC_SEL_MASK			GENMASK(1, 0)
 
 #define SUN4I_TCON1_BASIC0_REG			0x94
 #define SUN4I_TCON1_BASIC0_X(width)			((((width) - 1) & 0xfff) << 16)
@@ -128,6 +145,16 @@
 #define SUN4I_TCON_CEU_RANGE_G_REG		0x144
 #define SUN4I_TCON_CEU_RANGE_B_REG		0x148
 #define SUN4I_TCON_MUX_CTRL_REG			0x200
+
+#define SUN4I_TCON0_LVDS_ANA0_REG		0x220
+#define SUN6I_TCON0_LVDS_ANA0_EN_MB			BIT(31)
+#define SUN6I_TCON0_LVDS_ANA0_EN_LDO			BIT(30)
+#define SUN6I_TCON0_LVDS_ANA0_EN_DRVC			BIT(24)
+#define SUN6I_TCON0_LVDS_ANA0_EN_DRVD(x)		(((x) & 0xf) << 20)
+#define SUN6I_TCON0_LVDS_ANA0_C(x)			(((x) & 3) << 17)
+#define SUN6I_TCON0_LVDS_ANA0_V(x)			(((x) & 3) << 8)
+#define SUN6I_TCON0_LVDS_ANA0_PD(x)			(((x) & 3) << 4)
+
 #define SUN4I_TCON1_FILL_CTL_REG		0x300
 #define SUN4I_TCON1_FILL_BEG0_REG		0x304
 #define SUN4I_TCON1_FILL_END0_REG		0x308
@@ -142,9 +169,18 @@
 
 #define SUN4I_TCON_MAX_CHANNELS		2
 
+struct sun4i_tcon;
+
 struct sun4i_tcon_quirks {
-	bool	has_unknown_mux; /* sun5i has undocumented mux */
+	bool	has_channel_0;	/* a83t does not have channel 0 on second TCON */
 	bool	has_channel_1;	/* a33 does not have channel 1 */
+	bool	has_lvds_alt;	/* Does the LVDS clock have a parent other than the TCON clock? */
+	bool	needs_de_be_mux; /* sun6i needs mux to select backend */
+	bool    needs_edp_reset; /* a80 edp reset needed for tcon0 access */
+	bool	supports_lvds;   /* Does the TCON support an LVDS output? */
+
+	/* callback to handle tcon muxing options */
+	int	(*set_mux)(struct sun4i_tcon *, const struct drm_encoder *);
 };
 
 struct sun4i_tcon {
@@ -159,11 +195,17 @@ struct sun4i_tcon {
 	struct clk			*sclk0;
 	struct clk			*sclk1;
 
+	/* Possible mux for the LVDS clock */
+	struct clk			*lvds_pll;
+
 	/* Pixel clock */
 	struct clk			*dclk;
+	u8				dclk_max_div;
+	u8				dclk_min_div;
 
 	/* Reset control */
 	struct reset_control		*lcd_rst;
+	struct reset_control		*lvds_rst;
 
 	struct drm_panel		*panel;
 
@@ -172,27 +214,23 @@ struct sun4i_tcon {
 
 	/* Associated crtc */
 	struct sun4i_crtc		*crtc;
+
+	int				id;
+
+	/* TCON list management */
+	struct list_head		list;
 };
 
 struct drm_bridge *sun4i_tcon_find_bridge(struct device_node *node);
 struct drm_panel *sun4i_tcon_find_panel(struct device_node *node);
 
-/* Global Control */
-void sun4i_tcon_disable(struct sun4i_tcon *tcon);
-void sun4i_tcon_enable(struct sun4i_tcon *tcon);
-
-/* Channel Control */
-void sun4i_tcon_channel_disable(struct sun4i_tcon *tcon, int channel);
-void sun4i_tcon_channel_enable(struct sun4i_tcon *tcon, int channel);
-
 void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable);
+void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+			 const struct drm_encoder *encoder,
+			 const struct drm_display_mode *mode);
+void sun4i_tcon_set_status(struct sun4i_tcon *crtc,
+			   const struct drm_encoder *encoder, bool enable);
 
-/* Mode Related Controls */
-void sun4i_tcon_switch_interlace(struct sun4i_tcon *tcon,
-				 bool enable);
-void sun4i_tcon0_mode_set(struct sun4i_tcon *tcon,
-			  struct drm_display_mode *mode);
-void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
-			  struct drm_display_mode *mode);
+extern const struct of_device_id sun4i_tcon_of_table[];
 
 #endif /* __SUN4I_TCON_H__ */

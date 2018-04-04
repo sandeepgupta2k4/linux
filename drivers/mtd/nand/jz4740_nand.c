@@ -20,12 +20,11 @@
 #include <linux/slab.h>
 
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 
 #include <linux/gpio.h>
 
-#include <asm/mach-jz4740/gpio.h>
 #include <asm/mach-jz4740/jz4740_nand.h>
 
 #define JZ_REG_NAND_CTRL	0x50
@@ -310,23 +309,11 @@ static int jz_nand_detect_bank(struct platform_device *pdev,
 			       uint8_t *nand_dev_id)
 {
 	int ret;
-	int gpio;
-	char gpio_name[9];
 	char res_name[6];
 	uint32_t ctrl;
 	struct nand_chip *chip = &nand->chip;
 	struct mtd_info *mtd = nand_to_mtd(chip);
-
-	/* Request GPIO port. */
-	gpio = JZ_GPIO_MEM_CS0 + bank - 1;
-	sprintf(gpio_name, "NAND CS%d", bank);
-	ret = gpio_request(gpio, gpio_name);
-	if (ret) {
-		dev_warn(&pdev->dev,
-			"Failed to request %s gpio %d: %d\n",
-			gpio_name, gpio, ret);
-		goto notfound_gpio;
-	}
+	u8 id[2];
 
 	/* Request I/O resource. */
 	sprintf(res_name, "bank%d", bank);
@@ -334,10 +321,9 @@ static int jz_nand_detect_bank(struct platform_device *pdev,
 					&nand->bank_mem[bank - 1],
 					&nand->bank_base[bank - 1]);
 	if (ret)
-		goto notfound_resource;
+		return ret;
 
 	/* Enable chip in bank. */
-	jz_gpio_set_function(gpio, JZ_GPIO_FUNC_MEM_CS0);
 	ctrl = readl(nand->base + JZ_REG_NAND_CTRL);
 	ctrl |= JZ_NAND_CTRL_ENABLE_CHIP(bank - 1);
 	writel(ctrl, nand->base + JZ_REG_NAND_CTRL);
@@ -350,17 +336,16 @@ static int jz_nand_detect_bank(struct platform_device *pdev,
 
 		/* Retrieve the IDs from the first chip. */
 		chip->select_chip(mtd, 0);
-		chip->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
-		chip->cmdfunc(mtd, NAND_CMD_READID, 0x00, -1);
-		*nand_maf_id = chip->read_byte(mtd);
-		*nand_dev_id = chip->read_byte(mtd);
+		nand_reset_op(chip);
+		nand_readid_op(chip, 0, id, sizeof(id));
+		*nand_maf_id = id[0];
+		*nand_dev_id = id[1];
 	} else {
 		/* Detect additional chip. */
 		chip->select_chip(mtd, chipnr);
-		chip->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
-		chip->cmdfunc(mtd, NAND_CMD_READID, 0x00, -1);
-		if (*nand_maf_id != chip->read_byte(mtd)
-		 || *nand_dev_id != chip->read_byte(mtd)) {
+		nand_reset_op(chip);
+		nand_readid_op(chip, 0, id, sizeof(id));
+		if (*nand_maf_id != id[0] || *nand_dev_id != id[1]) {
 			ret = -ENODEV;
 			goto notfound_id;
 		}
@@ -377,12 +362,8 @@ notfound_id:
 	dev_info(&pdev->dev, "No chip found on bank %i\n", bank);
 	ctrl &= ~(JZ_NAND_CTRL_ENABLE_CHIP(bank - 1));
 	writel(ctrl, nand->base + JZ_REG_NAND_CTRL);
-	jz_gpio_set_function(gpio, JZ_GPIO_FUNC_NONE);
 	jz_nand_iounmap_resource(nand->bank_mem[bank - 1],
 				 nand->bank_base[bank - 1]);
-notfound_resource:
-	gpio_free(gpio);
-notfound_gpio:
 	return ret;
 }
 
@@ -503,7 +484,6 @@ err_nand_release:
 err_unclaim_banks:
 	while (chipnr--) {
 		unsigned char bank = nand->banks[chipnr];
-		gpio_free(JZ_GPIO_MEM_CS0 + bank - 1);
 		jz_nand_iounmap_resource(nand->bank_mem[bank - 1],
 					 nand->bank_base[bank - 1]);
 	}
@@ -530,7 +510,6 @@ static int jz_nand_remove(struct platform_device *pdev)
 		if (bank != 0) {
 			jz_nand_iounmap_resource(nand->bank_mem[bank - 1],
 						 nand->bank_base[bank - 1]);
-			gpio_free(JZ_GPIO_MEM_CS0 + bank - 1);
 		}
 	}
 

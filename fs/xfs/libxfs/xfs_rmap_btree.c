@@ -199,7 +199,7 @@ xfs_rmapbt_init_high_key_from_rec(
 	union xfs_btree_key	*key,
 	union xfs_btree_rec	*rec)
 {
-	__uint64_t		off;
+	uint64_t		off;
 	int			adj;
 
 	adj = be32_to_cpu(rec->rmap.rm_blockcount) - 1;
@@ -241,7 +241,7 @@ xfs_rmapbt_init_ptr_from_cur(
 	ptr->s = agf->agf_roots[cur->bc_btnum];
 }
 
-STATIC __int64_t
+STATIC int64_t
 xfs_rmapbt_key_diff(
 	struct xfs_btree_cur	*cur,
 	union xfs_btree_key	*key)
@@ -249,9 +249,9 @@ xfs_rmapbt_key_diff(
 	struct xfs_rmap_irec	*rec = &cur->bc_rec.r;
 	struct xfs_rmap_key	*kp = &key->rmap;
 	__u64			x, y;
-	__int64_t		d;
+	int64_t			d;
 
-	d = (__int64_t)be32_to_cpu(kp->rm_startblock) - rec->rm_startblock;
+	d = (int64_t)be32_to_cpu(kp->rm_startblock) - rec->rm_startblock;
 	if (d)
 		return d;
 
@@ -271,7 +271,7 @@ xfs_rmapbt_key_diff(
 	return 0;
 }
 
-STATIC __int64_t
+STATIC int64_t
 xfs_rmapbt_diff_two_keys(
 	struct xfs_btree_cur	*cur,
 	union xfs_btree_key	*k1,
@@ -279,10 +279,10 @@ xfs_rmapbt_diff_two_keys(
 {
 	struct xfs_rmap_key	*kp1 = &k1->rmap;
 	struct xfs_rmap_key	*kp2 = &k2->rmap;
-	__int64_t		d;
+	int64_t			d;
 	__u64			x, y;
 
-	d = (__int64_t)be32_to_cpu(kp1->rm_startblock) -
+	d = (int64_t)be32_to_cpu(kp1->rm_startblock) -
 		       be32_to_cpu(kp2->rm_startblock);
 	if (d)
 		return d;
@@ -303,13 +303,14 @@ xfs_rmapbt_diff_two_keys(
 	return 0;
 }
 
-static bool
+static xfs_failaddr_t
 xfs_rmapbt_verify(
 	struct xfs_buf		*bp)
 {
 	struct xfs_mount	*mp = bp->b_target->bt_mount;
 	struct xfs_btree_block	*block = XFS_BUF_TO_BLOCK(bp);
 	struct xfs_perag	*pag = bp->b_pag;
+	xfs_failaddr_t		fa;
 	unsigned int		level;
 
 	/*
@@ -325,19 +326,20 @@ xfs_rmapbt_verify(
 	 * in this case.
 	 */
 	if (block->bb_magic != cpu_to_be32(XFS_RMAP_CRC_MAGIC))
-		return false;
+		return __this_address;
 
 	if (!xfs_sb_version_hasrmapbt(&mp->m_sb))
-		return false;
-	if (!xfs_btree_sblock_v5hdr_verify(bp))
-		return false;
+		return __this_address;
+	fa = xfs_btree_sblock_v5hdr_verify(bp);
+	if (fa)
+		return fa;
 
 	level = be16_to_cpu(block->bb_level);
 	if (pag && pag->pagf_init) {
 		if (level >= pag->pagf_levels[XFS_BTNUM_RMAPi])
-			return false;
+			return __this_address;
 	} else if (level >= mp->m_rmap_maxlevels)
-		return false;
+		return __this_address;
 
 	return xfs_btree_sblock_verify(bp, mp->m_rmap_mxr[level != 0]);
 }
@@ -346,25 +348,30 @@ static void
 xfs_rmapbt_read_verify(
 	struct xfs_buf	*bp)
 {
-	if (!xfs_btree_sblock_verify_crc(bp))
-		xfs_buf_ioerror(bp, -EFSBADCRC);
-	else if (!xfs_rmapbt_verify(bp))
-		xfs_buf_ioerror(bp, -EFSCORRUPTED);
+	xfs_failaddr_t	fa;
 
-	if (bp->b_error) {
-		trace_xfs_btree_corrupt(bp, _RET_IP_);
-		xfs_verifier_error(bp);
+	if (!xfs_btree_sblock_verify_crc(bp))
+		xfs_verifier_error(bp, -EFSBADCRC, __this_address);
+	else {
+		fa = xfs_rmapbt_verify(bp);
+		if (fa)
+			xfs_verifier_error(bp, -EFSCORRUPTED, fa);
 	}
+
+	if (bp->b_error)
+		trace_xfs_btree_corrupt(bp, _RET_IP_);
 }
 
 static void
 xfs_rmapbt_write_verify(
 	struct xfs_buf	*bp)
 {
-	if (!xfs_rmapbt_verify(bp)) {
+	xfs_failaddr_t	fa;
+
+	fa = xfs_rmapbt_verify(bp);
+	if (fa) {
 		trace_xfs_btree_corrupt(bp, _RET_IP_);
-		xfs_buf_ioerror(bp, -EFSCORRUPTED);
-		xfs_verifier_error(bp);
+		xfs_verifier_error(bp, -EFSCORRUPTED, fa);
 		return;
 	}
 	xfs_btree_sblock_calc_crc(bp);
@@ -375,19 +382,19 @@ const struct xfs_buf_ops xfs_rmapbt_buf_ops = {
 	.name			= "xfs_rmapbt",
 	.verify_read		= xfs_rmapbt_read_verify,
 	.verify_write		= xfs_rmapbt_write_verify,
+	.verify_struct		= xfs_rmapbt_verify,
 };
 
-#if defined(DEBUG) || defined(XFS_WARN)
 STATIC int
 xfs_rmapbt_keys_inorder(
 	struct xfs_btree_cur	*cur,
 	union xfs_btree_key	*k1,
 	union xfs_btree_key	*k2)
 {
-	__uint32_t		x;
-	__uint32_t		y;
-	__uint64_t		a;
-	__uint64_t		b;
+	uint32_t		x;
+	uint32_t		y;
+	uint64_t		a;
+	uint64_t		b;
 
 	x = be32_to_cpu(k1->rmap.rm_startblock);
 	y = be32_to_cpu(k2->rmap.rm_startblock);
@@ -414,10 +421,10 @@ xfs_rmapbt_recs_inorder(
 	union xfs_btree_rec	*r1,
 	union xfs_btree_rec	*r2)
 {
-	__uint32_t		x;
-	__uint32_t		y;
-	__uint64_t		a;
-	__uint64_t		b;
+	uint32_t		x;
+	uint32_t		y;
+	uint64_t		a;
+	uint64_t		b;
 
 	x = be32_to_cpu(r1->rmap.rm_startblock);
 	y = be32_to_cpu(r2->rmap.rm_startblock);
@@ -437,7 +444,6 @@ xfs_rmapbt_recs_inorder(
 		return 1;
 	return 0;
 }
-#endif	/* DEBUG */
 
 static const struct xfs_btree_ops xfs_rmapbt_ops = {
 	.rec_len		= sizeof(struct xfs_rmap_rec),
@@ -456,10 +462,8 @@ static const struct xfs_btree_ops xfs_rmapbt_ops = {
 	.key_diff		= xfs_rmapbt_key_diff,
 	.buf_ops		= &xfs_rmapbt_buf_ops,
 	.diff_two_keys		= xfs_rmapbt_diff_two_keys,
-#if defined(DEBUG) || defined(XFS_WARN)
 	.keys_inorder		= xfs_rmapbt_keys_inorder,
 	.recs_inorder		= xfs_rmapbt_recs_inorder,
-#endif
 };
 
 /*

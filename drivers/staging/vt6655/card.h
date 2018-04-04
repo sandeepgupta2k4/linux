@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * File: card.h
  *
@@ -63,26 +54,26 @@ typedef enum _CARD_STATUS_TYPE {
 
 struct vnt_private;
 
-void CARDvSetRSPINF(struct vnt_private *, u8);
-void CARDvUpdateBasicTopRate(struct vnt_private *);
-bool CARDbIsOFDMinBasicRate(struct vnt_private *);
-void CARDvSetLoopbackMode(struct vnt_private *, unsigned short wLoopbackMode);
-bool CARDbSoftwareReset(struct vnt_private *);
-void CARDvSetFirstNextTBTT(struct vnt_private *,
+void CARDvSetRSPINF(struct vnt_private *priv, u8 bb_type);
+void CARDvUpdateBasicTopRate(struct vnt_private *priv);
+bool CARDbIsOFDMinBasicRate(struct vnt_private *priv);
+void CARDvSetLoopbackMode(struct vnt_private *priv, unsigned short wLoopbackMode);
+bool CARDbSoftwareReset(struct vnt_private *priv);
+void CARDvSetFirstNextTBTT(struct vnt_private *priv,
 			   unsigned short wBeaconInterval);
-void CARDvUpdateNextTBTT(struct vnt_private *, u64 qwTSF,
+void CARDvUpdateNextTBTT(struct vnt_private *priv, u64 qwTSF,
 			 unsigned short wBeaconInterval);
-bool CARDbGetCurrentTSF(struct vnt_private *, u64 *pqwCurrTSF);
+bool CARDbGetCurrentTSF(struct vnt_private *priv, u64 *pqwCurrTSF);
 u64 CARDqGetNextTBTT(u64 qwTSF, unsigned short wBeaconInterval);
 u64 CARDqGetTSFOffset(unsigned char byRxRate, u64 qwTSF1, u64 qwTSF2);
-unsigned char CARDbyGetPktType(struct vnt_private *);
-void CARDvSafeResetTx(struct vnt_private *);
-void CARDvSafeResetRx(struct vnt_private *);
-bool CARDbRadioPowerOff(struct vnt_private *);
-bool CARDbRadioPowerOn(struct vnt_private *);
-bool CARDbSetPhyParameter(struct vnt_private *, u8);
-bool CARDbUpdateTSF(struct vnt_private *, unsigned char byRxRate,
+unsigned char CARDbyGetPktType(struct vnt_private *priv);
+void CARDvSafeResetTx(struct vnt_private *priv);
+void CARDvSafeResetRx(struct vnt_private *priv);
+bool CARDbRadioPowerOff(struct vnt_private *priv);
+bool CARDbRadioPowerOn(struct vnt_private *priv);
+bool CARDbSetPhyParameter(struct vnt_private *priv, u8 bb_type);
+bool CARDbUpdateTSF(struct vnt_private *priv, unsigned char byRxRate,
 		    u64 qwBSSTimestamp);
-bool CARDbSetBeaconPeriod(struct vnt_private *, unsigned short wBeaconInterval);
+bool CARDbSetBeaconPeriod(struct vnt_private *priv, unsigned short wBeaconInterval);
 
 #endif /* __CARD_H__ */

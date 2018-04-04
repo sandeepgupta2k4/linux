@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * Crypto user configuration API.
  *
@@ -17,6 +18,8 @@
  * this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
+
+#include <linux/types.h>
 
 /* Netlink configuration messages.  */
 enum {

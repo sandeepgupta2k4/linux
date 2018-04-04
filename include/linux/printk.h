@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __KERNEL_PRINTK__
 #define __KERNEL_PRINTK__
 
@@ -131,10 +132,8 @@ struct va_format {
  */
 #define no_printk(fmt, ...)				\
 ({							\
-	do {						\
-		if (0)					\
-			printk(fmt, ##__VA_ARGS__);	\
-	} while (0);					\
+	if (0)						\
+		printk(fmt, ##__VA_ARGS__);		\
 	0;						\
 })
 
@@ -188,7 +187,6 @@ extern bool printk_timed_ratelimit(unsigned long *caller_jiffies,
 
 extern int printk_delay_msec;
 extern int dmesg_restrict;
-extern int kptr_restrict;
 
 extern int
 devkmsg_sysctl_set_loglvl(struct ctl_table *table, int write, void __user *buf,
@@ -198,7 +196,7 @@ extern void wake_up_klogd(void);
 
 char *log_buf_addr_get(void);
 u32 log_buf_len_get(void);
-void log_buf_kexec_setup(void);
+void log_buf_vmcoreinfo_setup(void);
 void __init setup_log_buf(int early);
 __printf(1, 2) void dump_stack_set_arch_desc(const char *fmt, ...);
 void dump_stack_print_info(const char *log_lvl);
@@ -246,7 +244,7 @@ static inline u32 log_buf_len_get(void)
 	return 0;
 }
 
-static inline void log_buf_kexec_setup(void)
+static inline void log_buf_vmcoreinfo_setup(void)
 {
 }
 
@@ -278,6 +276,8 @@ static inline void printk_safe_flush_on_panic(void)
 {
 }
 #endif
+
+extern int kptr_restrict;
 
 extern asmlinkage void dump_stack(void) __cold;
 

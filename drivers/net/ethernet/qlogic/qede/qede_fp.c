@@ -99,7 +99,7 @@ int qede_alloc_rx_buffer(struct qede_rx_queue *rxq, bool allow_lazy)
 /* Unmap the data and free skb */
 int qede_free_tx_pkt(struct qede_dev *edev, struct qede_tx_queue *txq, int *len)
 {
-	u16 idx = txq->sw_tx_cons & NUM_TX_BDS_MAX;
+	u16 idx = txq->sw_tx_cons;
 	struct sk_buff *skb = txq->sw_tx_ring.skbs[idx].skb;
 	struct eth_tx_1st_bd *first_bd;
 	struct eth_tx_bd *tx_data_bd;
@@ -156,7 +156,7 @@ static void qede_free_failed_tx_pkt(struct qede_tx_queue *txq,
 				    struct eth_tx_1st_bd *first_bd,
 				    int nbd, bool data_split)
 {
-	u16 idx = txq->sw_tx_prod & NUM_TX_BDS_MAX;
+	u16 idx = txq->sw_tx_prod;
 	struct sk_buff *skb = txq->sw_tx_ring.skbs[idx].skb;
 	struct eth_tx_bd *tx_data_bd;
 	int i, split_bd_len = 0;
@@ -320,21 +320,20 @@ static inline void qede_update_tx_producer(struct qede_tx_queue *txq)
 	barrier();
 	writel(txq->tx_db.raw, txq->doorbell_addr);
 
-	/* mmiowb is needed to synchronize doorbell writes from more than one
-	 * processor. It guarantees that the write arrives to the device before
-	 * the queue lock is released and another start_xmit is called (possibly
-	 * on another CPU). Without this barrier, the next doorbell can bypass
-	 * this doorbell. This is applicable to IA64/Altix systems.
+	/* Fence required to flush the write combined buffer, since another
+	 * CPU may write to the same doorbell address and data may be lost
+	 * due to relaxed order nature of write combined bar.
 	 */
-	mmiowb();
+	wmb();
 }
 
 static int qede_xdp_xmit(struct qede_dev *edev, struct qede_fastpath *fp,
 			 struct sw_rx_data *metadata, u16 padding, u16 length)
 {
 	struct qede_tx_queue *txq = fp->xdp_tx;
-	u16 idx = txq->sw_tx_prod & NUM_TX_BDS_MAX;
 	struct eth_tx_1st_bd *first_bd;
+	u16 idx = txq->sw_tx_prod;
+	u16 val;
 
 	if (!qed_chain_get_elem_left(&txq->tx_pbl)) {
 		txq->stopped_cnt++;
@@ -346,9 +345,11 @@ static int qede_xdp_xmit(struct qede_dev *edev, struct qede_fastpath *fp,
 	memset(first_bd, 0, sizeof(*first_bd));
 	first_bd->data.bd_flags.bitfields =
 	    BIT(ETH_TX_1ST_BD_FLAGS_START_BD_SHIFT);
-	first_bd->data.bitfields |=
-	    (length & ETH_TX_DATA_1ST_BD_PKT_LEN_MASK) <<
-	    ETH_TX_DATA_1ST_BD_PKT_LEN_SHIFT;
+
+	val = (length & ETH_TX_DATA_1ST_BD_PKT_LEN_MASK) <<
+	       ETH_TX_DATA_1ST_BD_PKT_LEN_SHIFT;
+
+	first_bd->data.bitfields |= cpu_to_le16(val);
 	first_bd->data.nbds = 1;
 
 	/* We can safely ignore the offset, as it's 0 for XDP */
@@ -363,7 +364,7 @@ static int qede_xdp_xmit(struct qede_dev *edev, struct qede_fastpath *fp,
 
 	txq->sw_tx_ring.xdp[idx].page = metadata->data;
 	txq->sw_tx_ring.xdp[idx].mapping = metadata->mapping;
-	txq->sw_tx_prod++;
+	txq->sw_tx_prod = (txq->sw_tx_prod + 1) % txq->num_tx_buffers;
 
 	/* Mark the fastpath for future XDP doorbell */
 	fp->xdp_xmit = 1;
@@ -393,14 +394,14 @@ static void qede_xdp_tx_int(struct qede_dev *edev, struct qede_tx_queue *txq)
 
 	while (hw_bd_cons != qed_chain_get_cons_idx(&txq->tx_pbl)) {
 		qed_chain_consume(&txq->tx_pbl);
-		idx = txq->sw_tx_cons & NUM_TX_BDS_MAX;
+		idx = txq->sw_tx_cons;
 
 		dma_unmap_page(&edev->pdev->dev,
 			       txq->sw_tx_ring.xdp[idx].mapping,
 			       PAGE_SIZE, DMA_BIDIRECTIONAL);
 		__free_page(txq->sw_tx_ring.xdp[idx].page);
 
-		txq->sw_tx_cons++;
+		txq->sw_tx_cons = (txq->sw_tx_cons + 1) % txq->num_tx_buffers;
 		txq->xmit_pkts++;
 	}
 }
@@ -430,7 +431,7 @@ static int qede_tx_int(struct qede_dev *edev, struct qede_tx_queue *txq)
 
 		bytes_compl += len;
 		pkts_compl++;
-		txq->sw_tx_cons++;
+		txq->sw_tx_cons = (txq->sw_tx_cons + 1) % txq->num_tx_buffers;
 		txq->xmit_pkts++;
 	}
 
@@ -1001,7 +1002,9 @@ static bool qede_rx_xdp(struct qede_dev *edev,
 
 	xdp.data_hard_start = page_address(bd->data);
 	xdp.data = xdp.data_hard_start + *data_offset;
+	xdp_set_data_meta_invalid(&xdp);
 	xdp.data_end = xdp.data + *len;
+	xdp.rxq = &rxq->xdp_rxq;
 
 	/* Queues always have a full reset currently, so for the time
 	 * being until there's atomic program replace just mark read
@@ -1076,8 +1079,7 @@ static struct sk_buff *qede_rx_allocate_skb(struct qede_dev *edev,
 	 * re-use the already allcoated & mapped memory.
 	 */
 	if (len + pad <= edev->rx_copybreak) {
-		memcpy(skb_put(skb, len),
-		       page_address(page) + offset, len);
+		skb_put_data(skb, page_address(page) + offset, len);
 		qede_reuse_page(rxq, bd);
 		goto out;
 	}
@@ -1245,16 +1247,10 @@ static int qede_rx_process_cqe(struct qede_dev *edev,
 
 	csum_flag = qede_check_csum(parse_flag);
 	if (unlikely(csum_flag == QEDE_CSUM_ERROR)) {
-		if (qede_pkt_is_ip_fragmented(fp_cqe, parse_flag)) {
+		if (qede_pkt_is_ip_fragmented(fp_cqe, parse_flag))
 			rxq->rx_ip_frags++;
-		} else {
-			DP_NOTICE(edev,
-				  "CQE has error, flags = %x, dropping incoming packet\n",
-				  parse_flag);
+		else
 			rxq->rx_hw_errors++;
-			qede_recycle_rx_bd_ring(rxq, fp_cqe->bd_num);
-			return 0;
-		}
 	}
 
 	/* Basic validation passed; Need to prepare an SKB. This would also
@@ -1424,7 +1420,7 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct eth_tx_2nd_bd *second_bd = NULL;
 	struct eth_tx_3rd_bd *third_bd = NULL;
 	struct eth_tx_bd *tx_data_bd = NULL;
-	u16 txq_index;
+	u16 txq_index, val = 0;
 	u8 nbd = 0;
 	dma_addr_t mapping;
 	int rc, frag_idx = 0, ipv6_ext = 0;
@@ -1455,7 +1451,7 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 #endif
 
 	/* Fill the entry in the SW ring and the BDs in the FW ring */
-	idx = txq->sw_tx_prod & NUM_TX_BDS_MAX;
+	idx = txq->sw_tx_prod;
 	txq->sw_tx_ring.skbs[idx].skb = skb;
 	first_bd = (struct eth_tx_1st_bd *)
 		   qed_chain_produce(&txq->tx_pbl);
@@ -1513,8 +1509,8 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		if (xmit_type & XMIT_ENC) {
 			first_bd->data.bd_flags.bitfields |=
 				1 << ETH_TX_1ST_BD_FLAGS_IP_CSUM_SHIFT;
-			first_bd->data.bitfields |=
-			    1 << ETH_TX_DATA_1ST_BD_TUNN_FLAG_SHIFT;
+
+			val |= (1 << ETH_TX_DATA_1ST_BD_TUNN_FLAG_SHIFT);
 		}
 
 		/* Legacy FW had flipped behavior in regard to this bit -
@@ -1522,8 +1518,7 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		 * packets when it didn't need to.
 		 */
 		if (unlikely(txq->is_legacy))
-			first_bd->data.bitfields ^=
-			    1 << ETH_TX_DATA_1ST_BD_TUNN_FLAG_SHIFT;
+			val ^= (1 << ETH_TX_DATA_1ST_BD_TUNN_FLAG_SHIFT);
 
 		/* If the packet is IPv6 with extension header, indicate that
 		 * to FW and pass few params, since the device cracker doesn't
@@ -1587,10 +1582,11 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 			data_split = true;
 		}
 	} else {
-		first_bd->data.bitfields |=
-		    (skb->len & ETH_TX_DATA_1ST_BD_PKT_LEN_MASK) <<
-		    ETH_TX_DATA_1ST_BD_PKT_LEN_SHIFT;
+		val |= ((skb->len & ETH_TX_DATA_1ST_BD_PKT_LEN_MASK) <<
+			 ETH_TX_DATA_1ST_BD_PKT_LEN_SHIFT);
 	}
+
+	first_bd->data.bitfields = cpu_to_le16(val);
 
 	/* Handle fragmented skb */
 	/* special handle for frags inside 2nd and 3rd bds.. */
@@ -1639,7 +1635,7 @@ netdev_tx_t qede_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	/* Advance packet producer only before sending the packet since mapping
 	 * of pages may fail.
 	 */
-	txq->sw_tx_prod++;
+	txq->sw_tx_prod = (txq->sw_tx_prod + 1) % txq->num_tx_buffers;
 
 	/* 'next page' entries are counted in the producer value */
 	txq->tx_db.data.bd_prod =

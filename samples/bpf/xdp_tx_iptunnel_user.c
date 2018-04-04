@@ -30,7 +30,7 @@ static __u32 xdp_flags = 0;
 static void int_exit(int sig)
 {
 	if (ifindex > -1)
-		set_link_xdp_fd(ifindex, -1, xdp_flags);
+		bpf_set_link_xdp_fd(ifindex, -1, xdp_flags);
 	exit(0);
 }
 
@@ -79,6 +79,8 @@ static void usage(const char *cmd)
 	printf("    -m <dest-MAC> Used in sending the IP Tunneled pkt\n");
 	printf("    -T <stop-after-X-seconds> Default: 0 (forever)\n");
 	printf("    -P <IP-Protocol> Default is TCP\n");
+	printf("    -S use skb-mode\n");
+	printf("    -N enforce native mode\n");
 	printf("    -h Display this help\n");
 }
 
@@ -138,7 +140,7 @@ int main(int argc, char **argv)
 {
 	unsigned char opt_flags[256] = {};
 	unsigned int kill_after_s = 0;
-	const char *optstr = "i:a:p:s:d:m:T:P:Sh";
+	const char *optstr = "i:a:p:s:d:m:T:P:SNh";
 	int min_port = 0, max_port = 0;
 	struct iptnl_info tnl = {};
 	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
@@ -206,6 +208,9 @@ int main(int argc, char **argv)
 		case 'S':
 			xdp_flags |= XDP_FLAGS_SKB_MODE;
 			break;
+		case 'N':
+			xdp_flags |= XDP_FLAGS_DRV_MODE;
+			break;
 		default:
 			usage(argv[0]);
 			return 1;
@@ -239,6 +244,7 @@ int main(int argc, char **argv)
 	}
 
 	signal(SIGINT, int_exit);
+	signal(SIGTERM, int_exit);
 
 	while (min_port <= max_port) {
 		vip.dport = htons(min_port++);
@@ -248,14 +254,14 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (set_link_xdp_fd(ifindex, prog_fd[0], xdp_flags) < 0) {
+	if (bpf_set_link_xdp_fd(ifindex, prog_fd[0], xdp_flags) < 0) {
 		printf("link set xdp fd failed\n");
 		return 1;
 	}
 
 	poll_stats(kill_after_s);
 
-	set_link_xdp_fd(ifindex, -1, xdp_flags);
+	bpf_set_link_xdp_fd(ifindex, -1, xdp_flags);
 
 	return 0;
 }

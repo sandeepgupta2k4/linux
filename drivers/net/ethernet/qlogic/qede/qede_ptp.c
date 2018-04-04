@@ -244,6 +244,7 @@ static int qede_ptp_cfg_filters(struct qede_dev *edev)
 		break;
 	case HWTSTAMP_FILTER_ALL:
 	case HWTSTAMP_FILTER_SOME:
+	case HWTSTAMP_FILTER_NTP_ALL:
 		ptp->rx_filter = HWTSTAMP_FILTER_NONE;
 		rx_filter = QED_PTP_FILTER_ALL;
 		break;
@@ -484,7 +485,7 @@ int qede_ptp_enable(struct qede_dev *edev, bool init_tc)
 	ptp->clock = ptp_clock_register(&ptp->clock_info, &edev->pdev->dev);
 	if (IS_ERR(ptp->clock)) {
 		rc = -EINVAL;
-		DP_ERR(edev, "PTP clock registeration failed\n");
+		DP_ERR(edev, "PTP clock registration failed\n");
 		goto err2;
 	}
 

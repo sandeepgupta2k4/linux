@@ -421,9 +421,10 @@ static void retrieve_apple_device_properties(struct boot_params *boot_params)
 	}
 }
 
+static const efi_char16_t apple[] = L"Apple";
+
 static void setup_quirks(struct boot_params *boot_params)
 {
-	efi_char16_t const apple[] = { 'A', 'p', 'p', 'l', 'e', 0 };
 	efi_char16_t *fw_vendor = (efi_char16_t *)(unsigned long)
 		efi_table_attr(efi_system_table, fw_vendor, sys_table);
 
@@ -439,7 +440,7 @@ setup_uga32(void **uga_handle, unsigned long size, u32 *width, u32 *height)
 	struct efi_uga_draw_protocol *uga = NULL, *first_uga;
 	efi_guid_t uga_proto = EFI_UGA_PROTOCOL_GUID;
 	unsigned long nr_ugas;
-	u32 *handles = (u32 *)uga_handle;;
+	u32 *handles = (u32 *)uga_handle;
 	efi_status_t status = EFI_INVALID_PARAMETER;
 	int i;
 
@@ -484,7 +485,7 @@ setup_uga64(void **uga_handle, unsigned long size, u32 *width, u32 *height)
 	struct efi_uga_draw_protocol *uga = NULL, *first_uga;
 	efi_guid_t uga_proto = EFI_UGA_PROTOCOL_GUID;
 	unsigned long nr_ugas;
-	u64 *handles = (u64 *)uga_handle;;
+	u64 *handles = (u64 *)uga_handle;
 	efi_status_t status = EFI_INVALID_PARAMETER;
 	int i;
 
@@ -767,7 +768,7 @@ static efi_status_t setup_e820(struct boot_params *params,
 		m |= (u64)efi->efi_memmap_hi << 32;
 #endif
 
-		d = (efi_memory_desc_t *)(m + (i * efi->efi_memdesc_size));
+		d = efi_early_memdesc_ptr(m, efi->efi_memdesc_size, i);
 		switch (d->type) {
 		case EFI_RESERVED_TYPE:
 		case EFI_RUNTIME_SERVICES_CODE:
@@ -997,6 +998,10 @@ struct boot_params *efi_main(struct efi_config *c,
 	if (boot_params->secure_boot == efi_secureboot_mode_unset)
 		boot_params->secure_boot = efi_get_secureboot(sys_table);
 
+	/* Ask the firmware to clear memory on unclean shutdown */
+	efi_enable_reset_attack_mitigation(sys_table);
+	efi_retrieve_tpm2_eventlog(sys_table);
+
 	setup_graphics(boot_params);
 
 	setup_efi_pci(boot_params);
@@ -1046,9 +1051,31 @@ struct boot_params *efi_main(struct efi_config *c,
 	memset((char *)gdt->address, 0x0, gdt->size);
 	desc = (struct desc_struct *)gdt->address;
 
-	/* The first GDT is a dummy and the second is unused. */
-	desc += 2;
+	/* The first GDT is a dummy. */
+	desc++;
 
+	if (IS_ENABLED(CONFIG_X86_64)) {
+		/* __KERNEL32_CS */
+		desc->limit0 = 0xffff;
+		desc->base0 = 0x0000;
+		desc->base1 = 0x0000;
+		desc->type = SEG_TYPE_CODE | SEG_TYPE_EXEC_READ;
+		desc->s = DESC_TYPE_CODE_DATA;
+		desc->dpl = 0;
+		desc->p = 1;
+		desc->limit1 = 0xf;
+		desc->avl = 0;
+		desc->l = 0;
+		desc->d = SEG_OP_SIZE_32BIT;
+		desc->g = SEG_GRANULARITY_4KB;
+		desc->base2 = 0x00;
+		desc++;
+	} else {
+		/* Second entry is unused on 32-bit */
+		desc++;
+	}
+
+	/* __KERNEL_CS */
 	desc->limit0 = 0xffff;
 	desc->base0 = 0x0000;
 	desc->base1 = 0x0000;
@@ -1056,14 +1083,20 @@ struct boot_params *efi_main(struct efi_config *c,
 	desc->s = DESC_TYPE_CODE_DATA;
 	desc->dpl = 0;
 	desc->p = 1;
-	desc->limit = 0xf;
+	desc->limit1 = 0xf;
 	desc->avl = 0;
-	desc->l = 0;
-	desc->d = SEG_OP_SIZE_32BIT;
+	if (IS_ENABLED(CONFIG_X86_64)) {
+		desc->l = 1;
+		desc->d = 0;
+	} else {
+		desc->l = 0;
+		desc->d = SEG_OP_SIZE_32BIT;
+	}
 	desc->g = SEG_GRANULARITY_4KB;
 	desc->base2 = 0x00;
-
 	desc++;
+
+	/* __KERNEL_DS */
 	desc->limit0 = 0xffff;
 	desc->base0 = 0x0000;
 	desc->base1 = 0x0000;
@@ -1071,30 +1104,31 @@ struct boot_params *efi_main(struct efi_config *c,
 	desc->s = DESC_TYPE_CODE_DATA;
 	desc->dpl = 0;
 	desc->p = 1;
-	desc->limit = 0xf;
+	desc->limit1 = 0xf;
 	desc->avl = 0;
 	desc->l = 0;
 	desc->d = SEG_OP_SIZE_32BIT;
 	desc->g = SEG_GRANULARITY_4KB;
 	desc->base2 = 0x00;
-
-#ifdef CONFIG_X86_64
-	/* Task segment value */
 	desc++;
-	desc->limit0 = 0x0000;
-	desc->base0 = 0x0000;
-	desc->base1 = 0x0000;
-	desc->type = SEG_TYPE_TSS;
-	desc->s = 0;
-	desc->dpl = 0;
-	desc->p = 1;
-	desc->limit = 0x0;
-	desc->avl = 0;
-	desc->l = 0;
-	desc->d = 0;
-	desc->g = SEG_GRANULARITY_4KB;
-	desc->base2 = 0x00;
-#endif /* CONFIG_X86_64 */
+
+	if (IS_ENABLED(CONFIG_X86_64)) {
+		/* Task segment value */
+		desc->limit0 = 0x0000;
+		desc->base0 = 0x0000;
+		desc->base1 = 0x0000;
+		desc->type = SEG_TYPE_TSS;
+		desc->s = 0;
+		desc->dpl = 0;
+		desc->p = 1;
+		desc->limit1 = 0x0;
+		desc->avl = 0;
+		desc->l = 0;
+		desc->d = 0;
+		desc->g = SEG_GRANULARITY_4KB;
+		desc->base2 = 0x00;
+		desc++;
+	}
 
 	asm volatile("cli");
 	asm volatile ("lgdt %0" : : "m" (*gdt));

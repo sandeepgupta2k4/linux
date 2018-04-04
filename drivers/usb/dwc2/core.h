@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
  * core.h - DesignWare HS OTG Controller common declarations
  *
@@ -395,6 +396,9 @@ enum dwc2_ep0_state {
  *                           (default when phy_type is UTMI+ or ULPI)
  *                       1 - 6 MHz
  *                           (default when phy_type is Full Speed)
+ * @oc_disable:		Flag to disable overcurrent condition.
+ *			0 - Allow overcurrent condition to get detected
+ *			1 - Disable overcurrent condtion to get detected
  * @ts_dline:           Enable Term Select Dline pulsing
  *                       0 - No (default)
  *                       1 - Yes
@@ -423,6 +427,10 @@ enum dwc2_ep0_state {
  *			needed.
  *			0 - No (default)
  *			1 - Yes
+ * @activate_stm_fs_transceiver: Activate internal transceiver using GGPIO
+ *			register.
+ *			0 - Deactivate the transceiver (default)
+ *			1 - Activate the transceiver
  * @g_dma:              Enables gadget dma usage (default: autodetect).
  * @g_dma_desc:         Enables gadget descriptor DMA (default: autodetect).
  * @g_rx_fifo_size:	The periodic rx fifo size for the device, in
@@ -477,6 +485,7 @@ struct dwc2_core_params {
 	bool uframe_sched;
 	bool external_id_pin_ctl;
 	bool hibernation;
+	bool activate_stm_fs_transceiver;
 	u16 max_packet_count;
 	u32 max_transfer_size;
 	u32 ahbcfg;
@@ -487,6 +496,7 @@ struct dwc2_core_params {
 	bool dma_desc_fs_enable;
 	bool host_support_fs_ls_low_power;
 	bool host_ls_low_power_phy_clk;
+	bool oc_disable;
 
 	u8 host_channels;
 	u16 host_rx_fifo_size;
@@ -527,6 +537,7 @@ struct dwc2_core_params {
  *                       2 - Internal DMA
  * @power_optimized     Are power optimizations enabled?
  * @num_dev_ep          Number of device endpoints available
+ * @num_dev_in_eps      Number of device IN endpoints available
  * @num_dev_perio_in_ep Number of device periodic IN endpoints
  *                      available
  * @dev_token_q_depth   Device Mode IN Token Sequence Learning Queue
@@ -555,6 +566,7 @@ struct dwc2_core_params {
  *                       2 - 8 or 16 bits
  * @snpsid:             Value from SNPSID register
  * @dev_ep_dirs:        Direction of device endpoints (GHWCFG1)
+ * @g_tx_fifo_size[]	Power-on values of TxFIFO sizes
  */
 struct dwc2_hw_params {
 	unsigned op_mode:3;
@@ -576,12 +588,14 @@ struct dwc2_hw_params {
 	unsigned fs_phy_type:2;
 	unsigned i2c_enable:1;
 	unsigned num_dev_ep:4;
+	unsigned num_dev_in_eps : 4;
 	unsigned num_dev_perio_in_ep:4;
 	unsigned total_fifo_size:16;
 	unsigned power_optimized:1;
 	unsigned utmi_phy_data_width:2;
 	u32 snpsid;
 	u32 dev_ep_dirs;
+	u32 g_tx_fifo_size[MAX_EPS_CHANNELS];
 };
 
 /* Size of control and EP0 buffers */
@@ -915,6 +929,7 @@ struct dwc2_hsotg {
 	int     irq;
 	struct clk *clk;
 	struct reset_control *reset;
+	struct reset_control *reset_ecc;
 
 	unsigned int queuing_high_bandwidth:1;
 	unsigned int srp_success:1;
@@ -957,6 +972,7 @@ struct dwc2_hsotg {
 	} flags;
 
 	struct list_head non_periodic_sched_inactive;
+	struct list_head non_periodic_sched_waiting;
 	struct list_head non_periodic_sched_active;
 	struct list_head *non_periodic_qh_ptr;
 	struct list_head periodic_sched_inactive;

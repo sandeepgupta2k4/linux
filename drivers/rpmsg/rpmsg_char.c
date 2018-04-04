@@ -116,7 +116,7 @@ static int rpmsg_ept_cb(struct rpmsg_device *rpdev, void *buf, int len,
 	if (!skb)
 		return -ENOMEM;
 
-	memcpy(skb_put(skb, len), buf, len);
+	skb_put_data(skb, buf, len);
 
 	spin_lock(&eptdev->queue_lock);
 	skb_queue_tail(&eptdev->queue, skb);
@@ -256,18 +256,18 @@ free_kbuf:
 	return ret < 0 ? ret : len;
 }
 
-static unsigned int rpmsg_eptdev_poll(struct file *filp, poll_table *wait)
+static __poll_t rpmsg_eptdev_poll(struct file *filp, poll_table *wait)
 {
 	struct rpmsg_eptdev *eptdev = filp->private_data;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	if (!eptdev->ept)
-		return POLLERR;
+		return EPOLLERR;
 
 	poll_wait(filp, &eptdev->readq, wait);
 
 	if (!skb_queue_empty(&eptdev->queue))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	mask |= rpmsg_poll(eptdev->ept, filp, wait);
 
@@ -390,7 +390,7 @@ static int rpmsg_eptdev_create(struct rpmsg_ctrldev *ctrldev,
 
 	ret = device_add(dev);
 	if (ret) {
-		dev_err(dev, "device_register failed: %d\n", ret);
+		dev_err(dev, "device_add failed: %d\n", ret);
 		put_device(dev);
 	}
 
@@ -505,7 +505,7 @@ static int rpmsg_chrdev_probe(struct rpmsg_device *rpdev)
 
 	ret = device_add(dev);
 	if (ret) {
-		dev_err(&rpdev->dev, "device_register failed: %d\n", ret);
+		dev_err(&rpdev->dev, "device_add failed: %d\n", ret);
 		put_device(dev);
 	}
 

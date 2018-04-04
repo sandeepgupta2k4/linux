@@ -414,7 +414,7 @@ static void virtio_vsock_event_fill(struct virtio_vsock *vsock)
 static void virtio_vsock_reset_sock(struct sock *sk)
 {
 	lock_sock(sk);
-	sk->sk_state = SS_UNCONNECTED;
+	sk->sk_state = TCP_CLOSE;
 	sk->sk_err = ECONNRESET;
 	sk->sk_error_report(sk);
 	release_sock(sk);
@@ -576,9 +576,9 @@ static int virtio_vsock_probe(struct virtio_device *vdev)
 
 	vsock->vdev = vdev;
 
-	ret = vsock->vdev->config->find_vqs(vsock->vdev, VSOCK_VQ_MAX,
-					    vsock->vqs, callbacks, names,
-					    NULL);
+	ret = virtio_find_vqs(vsock->vdev, VSOCK_VQ_MAX,
+			      vsock->vqs, callbacks, names,
+			      NULL);
 	if (ret < 0)
 		goto out;
 

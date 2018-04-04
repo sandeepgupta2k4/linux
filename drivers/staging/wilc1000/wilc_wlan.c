@@ -1,19 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/completion.h>
 #include "wilc_wlan_if.h"
 #include "wilc_wlan.h"
 #include "wilc_wfi_netdevice.h"
 #include "wilc_wlan_cfg.h"
 
-static CHIP_PS_STATE_T chip_ps_state = CHIP_WAKEDUP;
+static enum chip_ps_states chip_ps_state = CHIP_WAKEDUP;
 
-static inline void acquire_bus(struct wilc *wilc, BUS_ACQUIRE_T acquire)
+static inline void acquire_bus(struct wilc *wilc, enum bus_acquire acquire)
 {
 	mutex_lock(&wilc->hif_cs);
 	if (acquire == ACQUIRE_AND_WAKEUP)
 		chip_wakeup(wilc);
 }
 
-static inline void release_bus(struct wilc *wilc, BUS_RELEASE_T release)
+static inline void release_bus(struct wilc *wilc, enum bus_release release)
 {
 	if (release == RELEASE_ALLOW_SLEEP)
 		chip_allow_sleep(wilc);
@@ -287,7 +288,7 @@ static int wilc_wlan_txq_filter_dup_tcp_ack(struct net_device *dev)
 
 	while (dropped > 0) {
 		wait_for_completion_timeout(&wilc->txq_event,
-						msecs_to_jiffies(1));
+					    msecs_to_jiffies(1));
 		dropped--;
 	}
 
@@ -692,7 +693,7 @@ int wilc_wlan_handle_txq(struct net_device *dev, u32 *txq_count)
 		i = 0;
 		do {
 			tqe = wilc_wlan_txq_remove_from_head(dev);
-			if (tqe && (vmm_table[i] != 0)) {
+			if (tqe && vmm_table[i] != 0) {
 				u32 header, buffer_offset;
 
 				vmm_table[i] = cpu_to_le32(vmm_table[i]);
@@ -714,7 +715,7 @@ int wilc_wlan_handle_txq(struct net_device *dev, u32 *txq_count)
 					char *bssid = ((struct tx_complete_data *)(tqe->priv))->bssid;
 
 					buffer_offset = ETH_ETHERNET_HDR_OFFSET;
-					memcpy(&txb[offset + 4], bssid, 6);
+					memcpy(&txb[offset + 8], bssid, 6);
 				} else {
 					buffer_offset = HOST_HDR_OFFSET;
 				}
@@ -810,9 +811,9 @@ static void wilc_wlan_handle_rxq(struct wilc *wilc)
 				if (!is_cfg_packet) {
 					if (pkt_len > 0) {
 						wilc_frmw_to_linux(wilc,
-							      &buffer[offset],
-							      pkt_len,
-							      pkt_offset);
+								   &buffer[offset],
+								   pkt_len,
+								   pkt_offset);
 					}
 				} else {
 					struct wilc_cfg_rsp rsp;
@@ -1226,7 +1227,7 @@ int wilc_wlan_cfg_set(struct wilc_vif *vif, int start, u16 wid, u8 *buffer,
 			ret_size = 0;
 
 		if (!wait_for_completion_timeout(&wilc->cfg_event,
-					msecs_to_jiffies(CFG_PKTS_TIMEOUT))) {
+						 msecs_to_jiffies(CFG_PKTS_TIMEOUT))) {
 			netdev_dbg(vif->ndev, "Set Timed Out\n");
 			ret_size = 0;
 		}

@@ -28,8 +28,6 @@
 #define PCIBIOS_MIN_IO		0x1000
 #define PCIBIOS_MIN_MEM		0x10000000
 
-struct pci_dev;
-
 /* Values for the `which' argument to sys_pciconfig_iobase syscall.  */
 #define IOBASE_BRIDGE_NUMBER	0
 #define IOBASE_MEMORY		1
@@ -77,12 +75,11 @@ extern int pci_domain_nr(struct pci_bus *bus);
 extern int pci_proc_domain(struct pci_bus *bus);
 
 struct vm_area_struct;
-/* Map a range of PCI memory or I/O space for a device into user space */
-int pci_mmap_page_range(struct pci_dev *pdev, struct vm_area_struct *vma,
-			enum pci_mmap_state mmap_state, int write_combine);
 
-/* Tell drivers/pci/proc.c that we have pci_mmap_page_range() */
-#define HAVE_PCI_MMAP	1
+/* Tell drivers/pci/proc.c that we have pci_mmap_page_range() and it does WC */
+#define HAVE_PCI_MMAP		1
+#define arch_can_pci_mmap_io()	1
+#define arch_can_pci_mmap_wc()	1
 
 extern int pci_legacy_read(struct pci_bus *bus, loff_t port, u32 *val,
 			   size_t count);
@@ -123,6 +120,8 @@ extern int remove_phb_dynamic(struct pci_controller *phb);
 
 extern struct pci_dev *of_create_pci_dev(struct device_node *node,
 					struct pci_bus *bus, int devfn);
+
+extern unsigned int pci_parse_of_flags(u32 addr0, int bridge);
 
 extern void of_scan_pci_bridge(struct pci_dev *dev);
 

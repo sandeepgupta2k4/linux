@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/errno.h>
+#include <linux/capability.h>
 #include <net/netlink.h>
 #include <net/sock.h>
 
@@ -313,23 +314,30 @@ nfnl_cthelper_update_policy_one(const struct nf_conntrack_expect_policy *policy,
 static int nfnl_cthelper_update_policy_all(struct nlattr *tb[],
 					   struct nf_conntrack_helper *helper)
 {
-	struct nf_conntrack_expect_policy new_policy[helper->expect_class_max + 1];
+	struct nf_conntrack_expect_policy *new_policy;
 	struct nf_conntrack_expect_policy *policy;
-	int i, err;
+	int i, ret = 0;
+
+	new_policy = kmalloc_array(helper->expect_class_max + 1,
+				   sizeof(*new_policy), GFP_KERNEL);
+	if (!new_policy)
+		return -ENOMEM;
 
 	/* Check first that all policy attributes are well-formed, so we don't
 	 * leave things in inconsistent state on errors.
 	 */
 	for (i = 0; i < helper->expect_class_max + 1; i++) {
 
-		if (!tb[NFCTH_POLICY_SET + i])
-			return -EINVAL;
+		if (!tb[NFCTH_POLICY_SET + i]) {
+			ret = -EINVAL;
+			goto err;
+		}
 
-		err = nfnl_cthelper_update_policy_one(&helper->expect_policy[i],
+		ret = nfnl_cthelper_update_policy_one(&helper->expect_policy[i],
 						      &new_policy[i],
 						      tb[NFCTH_POLICY_SET + i]);
-		if (err < 0)
-			return err;
+		if (ret < 0)
+			goto err;
 	}
 	/* Now we can safely update them. */
 	for (i = 0; i < helper->expect_class_max + 1; i++) {
@@ -339,7 +347,9 @@ static int nfnl_cthelper_update_policy_all(struct nlattr *tb[],
 		policy->timeout	= new_policy->timeout;
 	}
 
-	return 0;
+err:
+	kfree(new_policy);
+	return ret;
 }
 
 static int nfnl_cthelper_update_policy(struct nf_conntrack_helper *helper,
@@ -398,13 +408,17 @@ nfnl_cthelper_update(const struct nlattr * const tb[],
 
 static int nfnl_cthelper_new(struct net *net, struct sock *nfnl,
 			     struct sk_buff *skb, const struct nlmsghdr *nlh,
-			     const struct nlattr * const tb[])
+			     const struct nlattr * const tb[],
+			     struct netlink_ext_ack *extack)
 {
 	const char *helper_name;
 	struct nf_conntrack_helper *cur, *helper = NULL;
 	struct nf_conntrack_tuple tuple;
 	struct nfnl_cthelper *nlcth;
 	int ret = 0;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (!tb[NFCTH_NAME] || !tb[NFCTH_TUPLE])
 		return -EINVAL;
@@ -599,7 +613,8 @@ out:
 
 static int nfnl_cthelper_get(struct net *net, struct sock *nfnl,
 			     struct sk_buff *skb, const struct nlmsghdr *nlh,
-			     const struct nlattr * const tb[])
+			     const struct nlattr * const tb[],
+			     struct netlink_ext_ack *extack)
 {
 	int ret = -ENOENT;
 	struct nf_conntrack_helper *cur;
@@ -608,6 +623,9 @@ static int nfnl_cthelper_get(struct net *net, struct sock *nfnl,
 	struct nf_conntrack_tuple tuple;
 	struct nfnl_cthelper *nlcth;
 	bool tuple_set = false;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (nlh->nlmsg_flags & NLM_F_DUMP) {
 		struct netlink_dump_control c = {
@@ -666,7 +684,8 @@ static int nfnl_cthelper_get(struct net *net, struct sock *nfnl,
 
 static int nfnl_cthelper_del(struct net *net, struct sock *nfnl,
 			     struct sk_buff *skb, const struct nlmsghdr *nlh,
-			     const struct nlattr * const tb[])
+			     const struct nlattr * const tb[],
+			     struct netlink_ext_ack *extack)
 {
 	char *helper_name = NULL;
 	struct nf_conntrack_helper *cur;
@@ -674,6 +693,9 @@ static int nfnl_cthelper_del(struct net *net, struct sock *nfnl,
 	bool tuple_set = false, found = false;
 	struct nfnl_cthelper *nlcth, *n;
 	int j = 0, ret;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (tb[NFCTH_NAME])
 		helper_name = nla_data(tb[NFCTH_NAME]);
@@ -686,6 +708,7 @@ static int nfnl_cthelper_del(struct net *net, struct sock *nfnl,
 		tuple_set = true;
 	}
 
+	ret = -ENOENT;
 	list_for_each_entry_safe(nlcth, n, &nfnl_cthelper_list, list) {
 		cur = &nlcth->helper;
 		j++;
@@ -699,16 +722,20 @@ static int nfnl_cthelper_del(struct net *net, struct sock *nfnl,
 		     tuple.dst.protonum != cur->tuple.dst.protonum))
 			continue;
 
-		found = true;
-		nf_conntrack_helper_unregister(cur);
-		kfree(cur->expect_policy);
+		if (refcount_dec_if_one(&cur->refcnt)) {
+			found = true;
+			nf_conntrack_helper_unregister(cur);
+			kfree(cur->expect_policy);
 
-		list_del(&nlcth->list);
-		kfree(nlcth);
+			list_del(&nlcth->list);
+			kfree(nlcth);
+		} else {
+			ret = -EBUSY;
+		}
 	}
 
 	/* Make sure we return success if we flush and there is no helpers */
-	return (found || j == 0) ? 0 : -ENOENT;
+	return (found || j == 0) ? 0 : ret;
 }
 
 static const struct nla_policy nfnl_cthelper_policy[NFCTH_MAX+1] = {

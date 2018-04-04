@@ -58,12 +58,11 @@
 	sha1su1		v\s0\().4s, v\s3\().4s
 	.endm
 
-	/*
-	 * The SHA1 round constants
-	 */
-	.align		4
-.Lsha1_rcon:
-	.word		0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6
+	.macro		loadrc, k, val, tmp
+	movz		\tmp, :abs_g0_nc:\val
+	movk		\tmp, :abs_g1:\val
+	dup		\k, \tmp
+	.endm
 
 	/*
 	 * void sha1_ce_transform(struct sha1_ce_state *sst, u8 const *src,
@@ -71,18 +70,18 @@
 	 */
 ENTRY(sha1_ce_transform)
 	/* load round constants */
-	adr		x6, .Lsha1_rcon
-	ld1r		{k0.4s}, [x6], #4
-	ld1r		{k1.4s}, [x6], #4
-	ld1r		{k2.4s}, [x6], #4
-	ld1r		{k3.4s}, [x6]
+	loadrc		k0.4s, 0x5a827999, w6
+	loadrc		k1.4s, 0x6ed9eba1, w6
+	loadrc		k2.4s, 0x8f1bbcdc, w6
+	loadrc		k3.4s, 0xca62c1d6, w6
 
 	/* load state */
 	ld1		{dgav.4s}, [x0]
 	ldr		dgb, [x0, #16]
 
 	/* load sha1_ce_state::finalize */
-	ldr		w4, [x0, #:lo12:sha1_ce_offsetof_finalize]
+	ldr_l		w4, sha1_ce_offsetof_finalize, x4
+	ldr		w4, [x0, x4]
 
 	/* load input */
 0:	ld1		{v8.4s-v11.4s}, [x1], #64
@@ -132,7 +131,8 @@ CPU_LE(	rev32		v11.16b, v11.16b	)
 	 * the padding is handled by the C code in that case.
 	 */
 	cbz		x4, 3f
-	ldr		x4, [x0, #:lo12:sha1_ce_offsetof_count]
+	ldr_l		w4, sha1_ce_offsetof_count, x4
+	ldr		x4, [x0, x4]
 	movi		v9.2d, #0
 	mov		x8, #0x80000000
 	movi		v10.2d, #0

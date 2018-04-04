@@ -326,7 +326,6 @@ static int vz89x_read_raw(struct iio_dev *indio_dev,
 static const struct iio_info vz89x_info = {
 	.attrs		= &vz89x_attrs_group,
 	.read_raw	= vz89x_read_raw,
-	.driver_module	= THIS_MODULE,
 };
 
 static const struct vz89x_chip_data vz89x_chips[] = {
@@ -393,7 +392,7 @@ static int vz89x_probe(struct i2c_client *client,
 	mutex_init(&data->lock);
 
 	indio_dev->dev.parent = &client->dev;
-	indio_dev->info = &vz89x_info,
+	indio_dev->info = &vz89x_info;
 	indio_dev->name = dev_name(&client->dev);
 	indio_dev->modes = INDIO_DIRECT_MODE;
 

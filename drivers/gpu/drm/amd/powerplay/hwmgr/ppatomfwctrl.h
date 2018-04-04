@@ -26,6 +26,8 @@
 
 #include "hwmgr.h"
 
+typedef enum atom_smu9_syspll0_clock_id BIOS_CLKID;
+
 #define GetIndexIntoMasterCmdTable(FieldName) \
 	(((char*)(&((struct atom_master_list_of_command_functions_v2_1*)0)->FieldName)-(char*)0)/sizeof(uint16_t))
 #define GetIndexIntoMasterDataTable(FieldName) \
@@ -69,7 +71,7 @@ struct pp_atomfwctrl_clock_dividers_soc15 {
 struct pp_atomfwctrl_avfs_parameters {
 	uint32_t   ulMaxVddc;
 	uint32_t   ulMinVddc;
-	uint8_t    ucMaxVidStep;
+
 	uint32_t   ulMeanNsigmaAcontant0;
 	uint32_t   ulMeanNsigmaAcontant1;
 	uint32_t   ulMeanNsigmaAcontant2;
@@ -82,31 +84,39 @@ struct pp_atomfwctrl_avfs_parameters {
 	uint32_t   ulGbVdroopTableCksonA0;
 	uint32_t   ulGbVdroopTableCksonA1;
 	uint32_t   ulGbVdroopTableCksonA2;
+
 	uint32_t   ulGbFuseTableCksoffM1;
-	uint16_t   usGbFuseTableCksoffM2;
-	uint32_t   ulGbFuseTableCksoffB;\
+	uint32_t   ulGbFuseTableCksoffM2;
+	uint32_t   ulGbFuseTableCksoffB;
+
 	uint32_t   ulGbFuseTableCksonM1;
-	uint16_t   usGbFuseTableCksonM2;
+	uint32_t   ulGbFuseTableCksonM2;
 	uint32_t   ulGbFuseTableCksonB;
-	uint16_t   usMaxVoltage025mv;
-	uint8_t    ucEnableGbVdroopTableCksoff;
+
 	uint8_t    ucEnableGbVdroopTableCkson;
-	uint8_t    ucEnableGbFuseTableCksoff;
 	uint8_t    ucEnableGbFuseTableCkson;
 	uint16_t   usPsmAgeComfactor;
-	uint8_t    ucEnableApplyAvfsCksoffVoltage;
+
 	uint32_t   ulDispclk2GfxclkM1;
-	uint16_t   usDispclk2GfxclkM2;
+	uint32_t   ulDispclk2GfxclkM2;
 	uint32_t   ulDispclk2GfxclkB;
 	uint32_t   ulDcefclk2GfxclkM1;
-	uint16_t   usDcefclk2GfxclkM2;
+	uint32_t   ulDcefclk2GfxclkM2;
 	uint32_t   ulDcefclk2GfxclkB;
 	uint32_t   ulPixelclk2GfxclkM1;
-	uint16_t   usPixelclk2GfxclkM2;
+	uint32_t   ulPixelclk2GfxclkM2;
 	uint32_t   ulPixelclk2GfxclkB;
 	uint32_t   ulPhyclk2GfxclkM1;
-	uint16_t   usPhyclk2GfxclkM2;
+	uint32_t   ulPhyclk2GfxclkM2;
 	uint32_t   ulPhyclk2GfxclkB;
+	uint32_t   ulAcgGbVdroopTableA0;
+	uint32_t   ulAcgGbVdroopTableA1;
+	uint32_t   ulAcgGbVdroopTableA2;
+	uint32_t   ulAcgGbFuseTableM1;
+	uint32_t   ulAcgGbFuseTableM2;
+	uint32_t   ulAcgGbFuseTableB;
+	uint32_t   ucAcgEnableGbVdroopTable;
+	uint32_t   ucAcgEnableGbFuseTable;
 };
 
 struct pp_atomfwctrl_gpio_parameters {
@@ -119,6 +129,82 @@ struct pp_atomfwctrl_gpio_parameters {
 	uint8_t   ucFwCtfGpio;
 	uint8_t   ucFwCtfPolarity;
 };
+
+struct pp_atomfwctrl_bios_boot_up_values {
+	uint32_t   ulRevision;
+	uint32_t   ulGfxClk;
+	uint32_t   ulUClk;
+	uint32_t   ulSocClk;
+	uint32_t   ulDCEFClk;
+	uint16_t   usVddc;
+	uint16_t   usVddci;
+	uint16_t   usMvddc;
+	uint16_t   usVddGfx;
+	uint8_t    ucCoolingID;
+};
+
+struct pp_atomfwctrl_smc_dpm_parameters
+{
+  uint8_t  liquid1_i2c_address;
+  uint8_t  liquid2_i2c_address;
+  uint8_t  vr_i2c_address;
+  uint8_t  plx_i2c_address;
+  uint8_t  liquid_i2c_linescl;
+  uint8_t  liquid_i2c_linesda;
+  uint8_t  vr_i2c_linescl;
+  uint8_t  vr_i2c_linesda;
+  uint8_t  plx_i2c_linescl;
+  uint8_t  plx_i2c_linesda;
+  uint8_t  vrsensorpresent;
+  uint8_t  liquidsensorpresent;
+  uint16_t maxvoltagestepgfx;
+  uint16_t maxvoltagestepsoc;
+  uint8_t  vddgfxvrmapping;
+  uint8_t  vddsocvrmapping;
+  uint8_t  vddmem0vrmapping;
+  uint8_t  vddmem1vrmapping;
+  uint8_t  gfxulvphasesheddingmask;
+  uint8_t  soculvphasesheddingmask;
+
+  uint16_t gfxmaxcurrent;
+  uint8_t  gfxoffset;
+  uint8_t  padding_telemetrygfx;
+  uint16_t socmaxcurrent;
+  uint8_t  socoffset;
+  uint8_t  padding_telemetrysoc;
+  uint16_t mem0maxcurrent;
+  uint8_t  mem0offset;
+  uint8_t  padding_telemetrymem0;
+  uint16_t mem1maxcurrent;
+  uint8_t  mem1offset;
+  uint8_t  padding_telemetrymem1;
+
+  uint8_t  acdcgpio;
+  uint8_t  acdcpolarity;
+  uint8_t  vr0hotgpio;
+  uint8_t  vr0hotpolarity;
+  uint8_t  vr1hotgpio;
+  uint8_t  vr1hotpolarity;
+  uint8_t  padding1;
+  uint8_t  padding2;
+
+  uint8_t  ledpin0;
+  uint8_t  ledpin1;
+  uint8_t  ledpin2;
+
+  uint8_t  gfxclkspreadenabled;
+  uint8_t  gfxclkspreadpercent;
+  uint16_t gfxclkspreadfreq;
+
+  uint8_t  uclkspreadenabled;
+  uint8_t  uclkspreadpercent;
+  uint16_t uclkspreadfreq;
+
+  uint8_t socclkspreadenabled;
+  uint8_t socclkspreadpercent;
+  uint16_t socclkspreadfreq;
+};
+
 int pp_atomfwctrl_get_gpu_pll_dividers_vega10(struct pp_hwmgr *hwmgr,
 		uint32_t clock_type, uint32_t clock_value,
 		struct pp_atomfwctrl_clock_dividers_soc15 *dividers);
@@ -135,6 +221,11 @@ int pp_atomfwctrl_get_avfs_information(struct pp_hwmgr *hwmgr,
 		struct pp_atomfwctrl_avfs_parameters *param);
 int pp_atomfwctrl_get_gpio_information(struct pp_hwmgr *hwmgr,
 		struct pp_atomfwctrl_gpio_parameters *param);
+
+int pp_atomfwctrl_get_vbios_bootup_values(struct pp_hwmgr *hwmgr,
+			struct pp_atomfwctrl_bios_boot_up_values *boot_values);
+int pp_atomfwctrl_get_smc_dpm_information(struct pp_hwmgr *hwmgr,
+			struct pp_atomfwctrl_smc_dpm_parameters *param);
 
 #endif
 
